@@ -42,3 +42,4 @@ tsconfig.tsbuildinfo
 /.wrangler/
 /outputs/
 /work/
+/releases/*.apk

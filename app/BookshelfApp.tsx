@@ -223,13 +223,109 @@ function todayLabel() {
   }).format(new Date());
 }
 
+type NativeWindow = Window & {
+  Capacitor?: { isNativePlatform?: () => boolean };
+};
+
+function isNativeRuntime() {
+  return typeof window !== "undefined" && Boolean((window as NativeWindow).Capacitor?.isNativePlatform?.());
+}
+
+function openMobileDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("mybookshelf-mobile-v1", 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains("library")) database.createObjectStore("library");
+      if (!database.objectStoreNames.contains("covers")) database.createObjectStore("covers");
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function mobileStoreGet<T>(storeName: "library" | "covers", key: string) {
+  const database = await openMobileDatabase();
+  return new Promise<T | undefined>((resolve, reject) => {
+    const request = database.transaction(storeName, "readonly").objectStore(storeName).get(key);
+    request.onsuccess = () => resolve(request.result as T | undefined);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function mobileStorePut(storeName: "library" | "covers", key: string, value: unknown) {
+  const database = await openMobileDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(storeName, "readwrite");
+    transaction.objectStore(storeName).put(value, key);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function loadNativeCover(book: Book) {
+  const cached = await mobileStoreGet<Blob>("covers", book.id);
+  if (cached) return URL.createObjectURL(cached);
+  if (!book.coverUrl || !navigator.onLine) return book.coverUrl;
+  const response = await fetch(book.coverUrl);
+  if (!response.ok) return book.coverUrl;
+  const blob = await response.blob();
+  await mobileStorePut("covers", book.id, blob);
+  return URL.createObjectURL(blob);
+}
+
+async function searchOpenLibraryDirect(title: string, author: string): Promise<SearchResult[]> {
+  const query = new URLSearchParams({
+    title,
+    limit: "6",
+    fields: "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,publisher,language,isbn,subject",
+  });
+  if (author.trim()) query.set("author", author.trim());
+  const response = await fetch(`https://openlibrary.org/search.json?${query}`);
+  if (!response.ok) throw new Error("Open Library indisponível");
+  const data = (await response.json()) as { docs?: Array<Record<string, unknown>> };
+  return (data.docs ?? []).map((document) => {
+    const authors = document.author_name as string[] | undefined;
+    const publishers = document.publisher as string[] | undefined;
+    const languages = document.language as string[] | undefined;
+    const isbns = document.isbn as string[] | undefined;
+    const subjects = document.subject as string[] | undefined;
+    const coverId = Number(document.cover_i ?? 0);
+    return {
+      sourceId: String(document.key ?? crypto.randomUUID()),
+      title: String(document.title ?? "Título não informado"),
+      author: authors?.[0] ?? "Autor não informado",
+      coverUrl: coverId ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg` : "",
+      pages: Number(document.number_of_pages_median ?? 0),
+      published: document.first_publish_year ? String(document.first_publish_year) : "",
+      publisher: publishers?.[0] ?? "",
+      language: languages?.[0]?.toUpperCase() ?? "",
+      isbn: isbns?.[0] ?? "",
+      categories: (subjects ?? []).slice(0, 3),
+    };
+  });
+}
+
 function Cover({ book, size = "medium" }: { book: Book; size?: "small" | "medium" | "large" }) {
   const [broken, setBroken] = useState(false);
+  const [displayUrl, setDisplayUrl] = useState(book.coverUrl);
+  useEffect(() => {
+    let objectUrl = "";
+    if (!isNativeRuntime() || !book.coverUrl.startsWith("http")) {
+      setDisplayUrl(book.coverUrl);
+      return;
+    }
+    loadNativeCover(book).then((url) => {
+      objectUrl = url.startsWith("blob:") ? url : "";
+      setDisplayUrl(url);
+    }).catch(() => setDisplayUrl(book.coverUrl));
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [book.id, book.coverUrl]);
   return (
     <div className={`book-cover book-cover--${size}`} style={{ "--cover-accent": book.accent } as React.CSSProperties}>
-      {!broken && book.coverUrl ? (
+      {!broken && displayUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={book.coverUrl} alt={`Capa de ${book.title}`} onError={() => setBroken(true)} />
+        <img src={displayUrl} alt={`Capa de ${book.title}`} onError={() => setBroken(true)} />
       ) : (
         <span>{book.title}</span>
       )}
@@ -285,12 +381,13 @@ export function BookshelfApp() {
   const hydrated = useRef(false);
 
   useEffect(() => {
+    const native = isNativeRuntime();
     setOnline(navigator.onLine);
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
-    const cached = localStorage.getItem("mybookshelf-library-v1");
+    const cached = native ? null : localStorage.getItem("mybookshelf-library-v1");
     const settings = localStorage.getItem("mybookshelf-settings-v1");
     if (cached) {
       try { setBooks(JSON.parse(cached) as Book[]); } catch { /* keep safe seed */ }
@@ -303,7 +400,12 @@ export function BookshelfApp() {
         if (parsed.accent) setAccent(parsed.accent);
       } catch { /* keep defaults */ }
     }
-    fetch("/api/library")
+    if (native) {
+      mobileStoreGet<Book[]>("library", "books")
+        .then((stored) => { if (stored?.length) setBooks(stored); })
+        .catch(() => undefined)
+        .finally(() => { hydrated.current = true; });
+    } else fetch("/api/library")
       .then((response) => response.json())
       .then((data: { books?: Array<Record<string, unknown>> }) => {
         if (!data.books?.length) return;
@@ -324,7 +426,7 @@ export function BookshelfApp() {
       })
       .catch(() => undefined)
       .finally(() => { hydrated.current = true; });
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    if (!native && "serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     return () => {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
@@ -333,7 +435,8 @@ export function BookshelfApp() {
 
   useEffect(() => {
     if (!hydrated.current) return;
-    localStorage.setItem("mybookshelf-library-v1", JSON.stringify(books));
+    if (isNativeRuntime()) mobileStorePut("library", "books", books).catch(() => undefined);
+    else localStorage.setItem("mybookshelf-library-v1", JSON.stringify(books));
   }, [books]);
 
   useEffect(() => {
@@ -376,7 +479,7 @@ export function BookshelfApp() {
   const appStyle = { "--accent": accent } as React.CSSProperties;
 
   return (
-    <main className="app-shell" data-theme={theme} data-style={style} style={appStyle}>
+    <main className="app-shell" data-theme={theme} data-style={style} data-native={isNativeRuntime() ? "true" : undefined} style={appStyle}>
       <aside className="sidebar">
         <button className="brand" onClick={() => navigate("dashboard")} aria-label="Ir para o início">
           <span className="brand-mark"><i /><i /><i /></span>
@@ -584,8 +687,9 @@ function AddBookDialog({ books, onClose, onAdd }: { books: Book[]; onClose: () =
     if (title.trim().length < 2) { setError("Digite pelo menos duas letras do título."); return; }
     setLoading(true); setError("");
     try {
-      const response = await fetch(`/api/books/search?title=${encodeURIComponent(title)}&author=${encodeURIComponent(author)}`);
-      const data = (await response.json()) as { books?: SearchResult[]; error?: string };
+      const data = isNativeRuntime()
+        ? { books: await searchOpenLibraryDirect(title, author) }
+        : (await (await fetch(`/api/books/search?title=${encodeURIComponent(title)}&author=${encodeURIComponent(author)}`)).json()) as { books?: SearchResult[]; error?: string };
       setResults(data.books ?? []); if (!data.books?.length) setError(data.error ?? "Nenhum resultado encontrado.");
     } catch { setError("Sem conexão. Você ainda pode adicionar o livro manualmente."); }
     finally { setLoading(false); }
@@ -596,7 +700,7 @@ function AddBookDialog({ books, onClose, onAdd }: { books: Book[]; onClose: () =
     const duplicate = books.some((book) => book.title.toLowerCase() === picked.title.toLowerCase() && book.author.toLowerCase() === picked.author.toLowerCase());
     if (duplicate) { setError("Este livro já está na sua biblioteca."); return; }
     const book: Book = { id: crypto.randomUUID(), title: picked.title, author: picked.author, coverUrl: picked.coverUrl, pages: picked.pages, currentPage: 0, status: "want", rating: 0, favorite: false, description: "", published: picked.published, publisher: picked.publisher, language: picked.language, isbn: picked.isbn, categories: picked.categories, tags: [], accent: "#7fd6ca", sessions: [] };
-    fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...book, metadata: { published: book.published, publisher: book.publisher, language: book.language, isbn: book.isbn, categories: book.categories } }) }).catch(() => undefined);
+    if (!isNativeRuntime()) fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...book, metadata: { published: book.published, publisher: book.publisher, language: book.language, isbn: book.isbn, categories: book.categories } }) }).catch(() => undefined);
     onAdd(book);
   };
   return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog add-dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><div className="dialog-head"><div><span className="eyebrow">Cadastro inteligente</span><h2 id="add-title">Adicionar livro</h2><p>Informe somente o essencial. Buscamos o restante.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="form-row"><label><span>Título do livro</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: Ensaio sobre a cegueira" /></label><label><span>Autor</span><input value={author} onChange={(event) => setAuthor(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: José Saramago" /></label></div><button className="primary-button search-metadata" onClick={search} disabled={loading}>{loading ? "Buscando metadados…" : "⌕ Buscar automaticamente"}</button>{error && <p className="form-error">{error}</p>}{results.length > 0 && <div className="search-results">{results.map((result) => <button key={result.sourceId} onClick={() => add(result)}><div className="result-cover">{result.coverUrl ? <img src={result.coverUrl} alt="" /> : <span>{result.title.slice(0, 1)}</span>}</div><span><b>{result.title}</b><small>{result.author} · {result.published || "Ano desconhecido"}</small><i>{result.pages ? `${result.pages} páginas` : "Páginas não informadas"}</i></span><strong>＋</strong></button>)}</div>}<div className="manual-add"><span>Não encontrou?</span><button onClick={() => add()}>Adicionar com estes dados</button></div><footer>Metadados fornecidos pela Open Library. Suas edições manuais nunca serão sobrescritas.</footer></section></div>;
@@ -613,7 +717,7 @@ function ReadingDialog({ book, onClose, onSave }: { book: Book; onClose: () => v
     if (book.sessions.some((session) => start <= session.end && end >= session.start)) { setError("Este intervalo se sobrepõe a uma leitura já registrada."); return; }
     const session = { date: new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(`${date}T12:00:00`)).replace(".", ""), start, end };
     const updated = { ...book, currentPage: Math.max(book.currentPage, end), status: end >= book.pages && book.pages > 0 ? "read" as Status : "reading" as Status, sessions: [...book.sessions, session] };
-    fetch(`/api/library/${book.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPage: updated.currentPage, status: updated.status, session: { startPage: start, endPage: end, readAt: date } }) }).catch(() => undefined);
+    if (!isNativeRuntime()) fetch(`/api/library/${book.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPage: updated.currentPage, status: updated.status, session: { startPage: start, endPage: end, readAt: date } }) }).catch(() => undefined);
     onSave(updated);
   };
   return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog reading-dialog" role="dialog" aria-modal="true"><div className="dialog-head"><div><span className="eyebrow">Sessão de leitura</span><h2>Registrar progresso</h2><p>{book.title}</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="reading-book-row"><Cover book={book} size="small" /><div><b>{progress(book)}% concluído</b><ProgressBar value={progress(book)} /><span>Você parou na página {book.currentPage}</span></div></div><div className="page-range"><label><span>Página inicial</span><input type="number" min="1" max={book.pages} value={start} onChange={(event) => setStart(Number(event.target.value))} /></label><i>→</i><label><span>Página final</span><input type="number" min="1" max={book.pages} value={end} onChange={(event) => setEnd(Number(event.target.value))} /></label></div><label className="date-field"><span>Data da leitura</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label><div className="session-summary"><span>Páginas nesta sessão</span><b>{Math.max(0, end - start + 1)}</b></div>{error && <p className="form-error">{error}</p>}<button className="primary-button dialog-submit" onClick={submit}>Registrar leitura</button><footer>Salvo automaticamente e disponível offline.</footer></section></div>;

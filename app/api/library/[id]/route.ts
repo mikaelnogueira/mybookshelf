@@ -27,7 +27,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         .from(readingSessions)
         .where(eq(readingSessions.bookId, id));
       const overlaps = sessions.some(
-        (item) => startPage <= item.endPage && endPage >= item.startPage,
+        (item: typeof readingSessions.$inferSelect) =>
+          startPage <= item.endPage && endPage >= item.startPage,
       );
       if (overlaps) {
         return Response.json({ error: "Esse intervalo já foi registrado." }, { status: 409 });

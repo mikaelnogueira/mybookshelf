@@ -12,6 +12,7 @@ Biblioteca pessoal multiplataforma, local-first e responsiva. Esta primeira vers
 - registro de leitura com validação de intervalos;
 - persistência estruturada em Cloudflare D1;
 - arquitetura preparada para sincronização, backup, importação e integrações.
+- aplicativo Android via Capacitor, com a interface e os dados essenciais armazenados no dispositivo.
 
 ## Desenvolvimento
 
@@ -28,5 +29,13 @@ Para validar a versão de produção:
 pnpm build
 pnpm test
 ```
+
+Para atualizar o projeto Android e gerar um APK instalável:
+
+```bash
+pnpm mobile:apk
+```
+
+O APK de depuração é assinado automaticamente pelo Android SDK e fica em `android/app/build/outputs/apk/debug/`.
 
 O nome `MyBookshelf` é provisório e está centralizado nos metadados e componentes principais para facilitar a futura alteração.
