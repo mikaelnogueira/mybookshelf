@@ -14,7 +14,7 @@ test("o build contém a experiência MyBookshelf", async () => {
   assert.match(server, /MyBookshelf/);
   assert.match(client, /Sua biblioteca viva/);
   assert.match(client, /Boa noite, leitor/);
-  assert.match(client, /Duna/);
+  assert.match(client, /Comece sua biblioteca/);
   assert.match(client, /Bem-vindo ao MyBookshelf/);
   assert.match(client, /Pular tutorial/);
   assert.match(client, /Rever tutorial/);
@@ -37,8 +37,10 @@ test("a Web inicia vazia e mantém a capa Glass sem padding", async () => {
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0002_first_access_reset.sql", import.meta.url), "utf8"),
   ]);
-  assert.match(app, /isNativeRuntime\(\) \? seedBooks : \[\]/);
+  assert.match(app, /useState<Book\[\]>\(\[\]\)/);
   assert.match(app, /\["reading", "read", "paused", "abandoned", "want"\]/);
+  assert.match(app, /mobileStorePut\("library", "organizations", organizations\)/);
+  assert.doesNotMatch(app, /tutorialStep !== null && !isNativeRuntime/);
   assert.match(css, /view-carousel \.library-book \{ padding: 0;/);
   assert.match(css, /view-carousel \.library-book-copy \{ padding: 10px;/);
   assert.match(resetMigration, /DELETE FROM `books`/);

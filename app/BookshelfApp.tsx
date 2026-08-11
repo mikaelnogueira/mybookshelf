@@ -242,8 +242,15 @@ function todayLabel() {
   }).format(new Date());
 }
 
-async function initializeWebStats() {
-  if (isNativeRuntime() || localStorage.getItem("mybookshelf-stats-initialized-v1") === "true") return;
+async function initializeStats() {
+  if (isNativeRuntime()) {
+    const existing = await mobileStoreGet<{ initializedAt: string }>("library", "stats");
+    if (!existing) {
+      await mobileStorePut("library", "stats", { currentStreak: 0, bestStreak: 0, booksRead: 0, pagesRead: 0, initializedAt: new Date().toISOString() });
+    }
+    return;
+  }
+  if (localStorage.getItem("mybookshelf-stats-initialized-v1") === "true") return;
   try {
     const response = await fetch("/api/stats", { method: "POST" });
     if (response.ok) localStorage.setItem("mybookshelf-stats-initialized-v1", "true");
@@ -392,7 +399,7 @@ function Heatmap({ empty = false }: { empty?: boolean }) {
 }
 
 export function BookshelfApp() {
-  const [books, setBooks] = useState<Book[]>(() => isNativeRuntime() ? seedBooks : []);
+  const [books, setBooks] = useState<Book[]>([]);
   const [section, setSection] = useState("dashboard");
   const [theme, setTheme] = useState<Theme>("light");
   const [style, setStyle] = useState<VisualStyle>("minimal");
@@ -447,8 +454,8 @@ export function BookshelfApp() {
     }
     setSettingsReady(true);
     const tutorialCompleted = localStorage.getItem("mybookshelf-tutorial-v1") === "completed";
-    if (!native && !tutorialCompleted) setTutorialStep(0);
-    if (!native && tutorialCompleted) initializeWebStats();
+    if (!tutorialCompleted) setTutorialStep(0);
+    if (tutorialCompleted) initializeStats().catch(() => undefined);
     if (!native) {
       const cachedOrganizations = localStorage.getItem("mybookshelf-organizations-v1");
       if (cachedOrganizations) {
@@ -465,6 +472,10 @@ export function BookshelfApp() {
         .then((stored) => { if (stored?.length) setBooks(stored); })
         .catch(() => undefined)
         .finally(() => { hydrated.current = true; });
+      mobileStoreGet<OrganizationItem[]>("library", "organizations")
+        .then((stored) => { if (stored?.length) setOrganizations(stored); })
+        .catch(() => undefined)
+        .finally(() => { organizationsHydrated.current = true; });
     } else fetch("/api/library")
       .then((response) => response.json())
       .then((data: { books?: Array<Record<string, unknown>> }) => {
@@ -505,12 +516,12 @@ export function BookshelfApp() {
   }, [theme, style, accent, settingsReady]);
 
   useEffect(() => {
-    if (!organizationsHydrated.current || isNativeRuntime()) return;
-    localStorage.setItem("mybookshelf-organizations-v1", JSON.stringify(organizations));
+    if (!organizationsHydrated.current) return;
+    if (isNativeRuntime()) mobileStorePut("library", "organizations", organizations).catch(() => undefined);
+    else localStorage.setItem("mybookshelf-organizations-v1", JSON.stringify(organizations));
   }, [organizations]);
 
   useEffect(() => {
-    if (isNativeRuntime()) return;
     let tracking = false;
     let startX = 0;
     let startY = 0;
@@ -597,13 +608,13 @@ export function BookshelfApp() {
 
   const finishTutorial = () => {
     localStorage.setItem("mybookshelf-tutorial-v1", "completed");
-    initializeWebStats();
+    initializeStats().catch(() => undefined);
     setTutorialStep(null);
   };
 
   const createOrganization = (item: OrganizationItem) => {
     setOrganizations((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
-    fetch("/api/organization", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).catch(() => undefined);
+    if (!isNativeRuntime()) fetch("/api/organization", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).catch(() => undefined);
     setOrganizationDialog(null);
     setToast(`${item.name} foi criado e salvo.`);
   };
@@ -686,7 +697,7 @@ export function BookshelfApp() {
       {showPrefs && <Preferences theme={theme} setTheme={setTheme} style={style} setStyle={setStyle} accent={accent} setAccent={setAccent} onTutorial={() => { setShowPrefs(false); setTutorialStep(0); }} onClose={() => setShowPrefs(false)} />}
       {showReading && selectedBook && <ReadingDialog book={selectedBook} onClose={() => setShowReading(false)} onSave={(book) => { updateBook(book); setShowReading(false); setToast("Progresso salvo automaticamente."); }} />}
       {organizationDialog && <OrganizationDialog kind={organizationDialog} books={books} existing={organizations} onClose={() => setOrganizationDialog(null)} onSave={createOrganization} />}
-      {tutorialStep !== null && !isNativeRuntime() && <Tutorial step={tutorialStep} onStep={setTutorialStep} onSkip={finishTutorial} onFinish={finishTutorial} />}
+      {tutorialStep !== null && <Tutorial step={tutorialStep} onStep={setTutorialStep} onSkip={finishTutorial} onFinish={finishTutorial} />}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </main>
   );
