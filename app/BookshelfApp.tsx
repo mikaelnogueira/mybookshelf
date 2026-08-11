@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { classifyBookSubjects } from "../lib/bookClassification";
 
 type Status = "reading" | "read" | "paused" | "abandoned" | "want";
 type ViewMode = "grid" | "carousel" | "list" | "table";
@@ -42,6 +43,7 @@ type SearchResult = {
   language: string;
   isbn: string;
   categories: string[];
+  tags: string[];
 };
 
 type OrganizationItem = {
@@ -234,12 +236,19 @@ function progress(book: Book) {
   return book.pages ? Math.min(100, Math.round((book.currentPage / book.pages) * 100)) : 0;
 }
 
-function todayLabel() {
+function todayLabel(date = new Date()) {
   return new Intl.DateTimeFormat("pt-BR", {
     weekday: "long",
     day: "2-digit",
     month: "long",
-  }).format(new Date());
+  }).format(date);
+}
+
+function greetingFor(date: Date) {
+  const hour = date.getHours();
+  if (hour < 12) return "Bom dia";
+  if (hour < 18) return "Boa tarde";
+  return "Boa noite";
 }
 
 function localDateKey(date: Date) {
@@ -264,6 +273,25 @@ function sessionDateKey(session: Session) {
 
 function pagesInSession(session: Session) {
   return Math.max(0, session.end - session.start + 1);
+}
+
+function bookFromServer(item: Record<string, unknown>): Book {
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = typeof item.metadataJson === "string" ? JSON.parse(item.metadataJson) as Record<string, unknown> : {};
+  } catch { /* preserve the book even if legacy metadata is malformed */ }
+  const categories = Array.isArray(metadata.categories) ? metadata.categories.filter((value): value is string => typeof value === "string") : [];
+  const tags = Array.isArray(metadata.tags) ? metadata.tags.filter((value): value is string => typeof value === "string") : [];
+  return {
+    id: String(item.id), title: String(item.title), author: String(item.author),
+    coverUrl: String(item.coverUrl ?? ""), pages: Number(item.pages ?? 0),
+    currentPage: Number(item.currentPage ?? 0), status: (item.status ?? "want") as Status,
+    rating: Number(item.rating ?? 0), favorite: Boolean(item.favorite),
+    description: String(item.description ?? ""), published: String(metadata.published ?? ""),
+    publisher: String(metadata.publisher ?? ""), language: String(metadata.language ?? ""),
+    isbn: String(metadata.isbn ?? ""), categories, tags, accent: String(metadata.accent ?? "#7fd6ca"),
+    sessions: [],
+  };
 }
 
 async function initializeStats() {
@@ -358,6 +386,7 @@ async function searchOpenLibraryDirect(title: string, author: string): Promise<S
     const isbns = document.isbn as string[] | undefined;
     const subjects = document.subject as string[] | undefined;
     const coverId = Number(document.cover_i ?? 0);
+    const classification = classifyBookSubjects(subjects ?? []);
     return {
       sourceId: String(document.key ?? crypto.randomUUID()),
       title: String(document.title ?? "Título não informado"),
@@ -368,7 +397,7 @@ async function searchOpenLibraryDirect(title: string, author: string): Promise<S
       publisher: publishers?.[0] ?? "",
       language: languages?.[0]?.toUpperCase() ?? "",
       isbn: isbns?.[0] ?? "",
-      categories: (subjects ?? []).slice(0, 3),
+      ...classification,
     };
   });
 }
@@ -442,7 +471,7 @@ export function BookshelfApp() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
   const [organizationFilter, setOrganizationFilter] = useState<{ label: string; bookIds: string[] } | null>(null);
-  const [organizationDialog, setOrganizationDialog] = useState<OrganizationKind | null>(null);
+  const [organizationDialog, setOrganizationDialog] = useState<{ kind: OrganizationKind; item?: OrganizationItem } | null>(null);
   const hydrated = useRef(false);
   const organizationsHydrated = useRef(false);
 
@@ -499,14 +528,7 @@ export function BookshelfApp() {
           fetch("/api/organization").then((response) => response.json()).catch(() => ({ items: [] })),
         ]) as [{ books?: Array<Record<string, unknown>> }, { items?: OrganizationItem[] }];
         if (active && libraryData.books?.length) {
-          setBooks(libraryData.books.map((item) => ({
-            id: String(item.id), title: String(item.title), author: String(item.author),
-            coverUrl: String(item.coverUrl ?? ""), pages: Number(item.pages ?? 0),
-            currentPage: Number(item.currentPage ?? 0), status: (item.status ?? "want") as Status,
-            rating: Number(item.rating ?? 0), favorite: Boolean(item.favorite),
-            description: String(item.description ?? ""), published: "", publisher: "",
-            language: "", isbn: "", categories: [], tags: [], accent: "#7fd6ca", sessions: [],
-          })));
+          setBooks(libraryData.books.map(bookFromServer));
         }
         if (active && organizationData.items?.length) setOrganizations(organizationData.items);
       }
@@ -633,11 +655,19 @@ export function BookshelfApp() {
     setTutorialStep(null);
   };
 
-  const createOrganization = (item: OrganizationItem) => {
+  const saveOrganization = (item: OrganizationItem) => {
+    const editing = organizations.some((existing) => existing.id === item.id);
     setOrganizations((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
-    if (!isNativeRuntime()) fetch("/api/organization", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).catch(() => undefined);
+    if (!isNativeRuntime()) fetch("/api/organization", { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).catch(() => undefined);
     setOrganizationDialog(null);
-    setToast(`${item.name} foi criado e salvo.`);
+    setToast(`${item.name} foi ${editing ? "atualizado" : "criado"} e salvo.`);
+  };
+
+  const deleteOrganization = (item: OrganizationItem) => {
+    if (!window.confirm(`Excluir ${item.name}? Os metadados automáticos dos livros serão preservados.`)) return;
+    setOrganizations((current) => current.filter((existing) => existing.id !== item.id));
+    if (!isNativeRuntime()) fetch(`/api/organization?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }).catch(() => undefined);
+    setToast(`${item.name} foi removido. Os metadados automáticos foram mantidos.`);
   };
 
   const useOrganizationFilter = (item: OrganizationItem) => {
@@ -687,7 +717,7 @@ export function BookshelfApp() {
           <div className="top-actions">
             <button className="icon-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Alternar tema">{theme === "dark" ? "☼" : "◐"}</button>
             <button className="icon-button" onClick={() => setShowPrefs(true)} aria-label="Personalizar interface">◈</button>
-            <button className="primary-button" onClick={() => setShowAdd(true)}><span>＋</span>Adicionar livro</button>
+            <button type="button" className="primary-button add-book-button" onClick={() => setShowAdd(true)} aria-haspopup="dialog"><span className="add-icon" aria-hidden="true">+</span>Adicionar livro</button>
           </div>
         </header>
 
@@ -704,20 +734,20 @@ export function BookshelfApp() {
         ) : section === "integrations" ? (
           <Integrations />
         ) : (
-          <Organize section={section} books={books} items={organizations} onOpen={setSelectedBook} onCreate={() => setOrganizationDialog(section as OrganizationKind)} onFilter={useOrganizationFilter} />
+          <Organize section={section} books={books} items={organizations} onOpen={setSelectedBook} onCreate={() => setOrganizationDialog({ kind: section as OrganizationKind })} onEdit={(item) => setOrganizationDialog({ kind: item.kind, item })} onDelete={deleteOrganization} onFilter={useOrganizationFilter} />
         )}
       </div>
 
       <nav className="mobile-nav" aria-label="Navegação principal">
-        {[["dashboard", "⌂", "Início"], ["library", "▦", "Biblioteca"], ["add", "＋", "Adicionar"], ["stats", "↗", "Estatísticas"], ["profile", "○", "Perfil"]].map(([id, icon, label]) => (
-          <button key={id} className={section === id ? "active" : ""} onClick={() => id === "add" ? setShowAdd(true) : id === "profile" ? setShowPrefs(true) : navigate(id)}><span>{icon}</span>{label}</button>
+        {[["dashboard", "⌂", "Início"], ["library", "▦", "Biblioteca"], ["add", "+", "Adicionar"], ["stats", "↗", "Estatísticas"], ["profile", "○", "Perfil"]].map(([id, icon, label]) => (
+          <button type="button" key={id} className={`${section === id ? "active" : ""} ${id === "add" ? "mobile-add-button" : ""}`} onClick={() => id === "add" ? setShowAdd(true) : id === "profile" ? setShowPrefs(true) : navigate(id)}><span className={id === "add" ? "add-icon" : undefined}>{icon}</span>{label}</button>
         ))}
       </nav>
 
       {showAdd && <AddBookDialog books={books} onClose={() => setShowAdd(false)} onAdd={(book) => { setBooks((current) => [book, ...current]); setShowAdd(false); setToast(`${book.title} foi adicionado à sua estante.`); }} />}
       {showPrefs && <Preferences theme={theme} setTheme={setTheme} style={style} setStyle={setStyle} accent={accent} setAccent={setAccent} onTutorial={() => { setShowPrefs(false); setTutorialStep(0); }} onClose={() => setShowPrefs(false)} />}
       {showReading && selectedBook && <ReadingDialog book={selectedBook} onClose={() => setShowReading(false)} onSave={(book) => { updateBook(book); setShowReading(false); setToast("Progresso salvo automaticamente."); }} />}
-      {organizationDialog && <OrganizationDialog kind={organizationDialog} books={books} existing={organizations} onClose={() => setOrganizationDialog(null)} onSave={createOrganization} />}
+      {organizationDialog && <OrganizationDialog kind={organizationDialog.kind} item={organizationDialog.item} books={books} existing={organizations} onClose={() => setOrganizationDialog(null)} onSave={saveOrganization} />}
       {tutorialStep !== null && <Tutorial step={tutorialStep} onStep={setTutorialStep} onSkip={finishTutorial} onFinish={finishTutorial} />}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </main>
@@ -725,13 +755,17 @@ export function BookshelfApp() {
 }
 
 function Dashboard({ books, readingBook, onOpen, onRead, onAdd, onNavigate }: { books: Book[]; readingBook?: Book; onOpen: (book: Book) => void; onRead: () => void; onAdd: () => void; onNavigate: (section: string) => void }) {
+  const [today, setToday] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setToday(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const read = books.filter((book) => book.status === "read").length;
   const pagesByDate = new Map<string, number>();
   books.flatMap((book) => book.sessions).forEach((session) => {
     const key = sessionDateKey(session);
     if (key) pagesByDate.set(key, (pagesByDate.get(key) ?? 0) + pagesInSession(session));
   });
-  const today = new Date();
   const todayKey = localDateKey(today);
   const recentDays = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(today);
@@ -771,7 +805,7 @@ function Dashboard({ books, readingBook, onOpen, onRead, onAdd, onNavigate }: { 
   return (
     <div className="page dashboard-page">
       <section className="page-heading dashboard-heading">
-        <div><span className="eyebrow">{todayLabel()}</span><h1>Boa noite, leitor.</h1><p>{pagesByDate.size ? `${pagesByDate.get(todayKey) ?? 0} páginas registradas hoje.` : "Suas métricas começam com a primeira leitura registrada."}</p></div>
+        <div><span className="eyebrow">{todayLabel(today)}</span><h1>{greetingFor(today)}, leitor.</h1><p>{pagesByDate.size ? `${pagesByDate.get(todayKey) ?? 0} páginas registradas hoje.` : "Suas métricas começam com a primeira leitura registrada."}</p></div>
         <div className="heading-quote"><i>“</i><p>Um livro é uma prova de que os seres humanos são capazes de fazer magia.<small>— Carl Sagan</small></p></div>
       </section>
 
@@ -790,7 +824,7 @@ function Dashboard({ books, readingBook, onOpen, onRead, onAdd, onNavigate }: { 
                 <div className="current-actions"><button className="primary-button" onClick={onRead}>＋ Registrar leitura</button><button className="quiet-button" onClick={() => onOpen(readingBook)}>Continuar</button></div>
               </div>
             </div>
-          </> : <div className="empty-state"><span>{books.length ? "◐" : "＋"}</span><h2>{books.length ? "Nenhuma leitura em andamento" : "Comece sua biblioteca"}</h2><p>{books.length ? "Mova um livro para Lendo quando quiser começar." : "Adicione seu primeiro livro para acompanhar leituras, páginas e anotações."}</p><button className="primary-button" onClick={books.length ? () => onNavigate("library") : onAdd}>{books.length ? "Abrir biblioteca" : "Adicionar primeiro livro"}</button></div>}
+          </> : <div className="empty-state"><span className={books.length ? undefined : "add-icon"}>{books.length ? "◐" : "+"}</span><h2>{books.length ? "Nenhuma leitura em andamento" : "Comece sua biblioteca"}</h2><p>{books.length ? "Mova um livro para Lendo quando quiser começar." : "Adicione seu primeiro livro para acompanhar leituras, páginas e anotações."}</p><button className="primary-button" onClick={books.length ? () => onNavigate("library") : onAdd}>{books.length ? "Abrir biblioteca" : "Adicionar primeiro livro"}</button></div>}
         </section>
 
         <section className="quick-stats">
@@ -889,15 +923,26 @@ function History({ books }: { books: Book[] }) {
   return <div className="page history-page"><section className="page-heading"><div><span className="eyebrow">Registro permanente</span><h1>Histórico</h1><p>Todas as mudanças importantes da sua biblioteca, em ordem cronológica.</p></div></section>{events.length ? <div className="history-layout"><section className="history-list panel">{events.map(([date, type, title, detail], index) => <article key={index}><span>{date}</span><i className={`event-${type}`} /><div><b>{title}</b><p>{detail}</p></div></article>)}</section><aside className="panel history-filter"><h2>Filtrar atividade</h2>{["Todos os eventos", "Leituras", "Livros", "Anotações", "Avaliações"].map((label, index) => <button className={index === 0 ? "active" : ""} key={label}>{label}<span>{index === 0 ? events.length : 0}</span></button>)}</aside></div> : <section className="panel empty-state"><span>↺</span><h2>Nenhuma atividade ainda</h2><p>Seu histórico começará quando você adicionar o primeiro livro.</p></section>}</div>;
 }
 
-function Organize({ section, books, items, onOpen, onCreate, onFilter }: { section: string; books: Book[]; items: OrganizationItem[]; onOpen: (book: Book) => void; onCreate: () => void; onFilter: (item: OrganizationItem) => void }) {
-  const labels: Record<string, [string, string]> = { categories: ["Categorias", "Navegue por assuntos identificados automaticamente."], tags: ["Tags", "Crie relações livres entre livros, ideias e momentos."], collections: ["Coleções", "Agrupe livros em estantes que fazem sentido para você."] };
+function Organize({ section, books, items, onOpen, onCreate, onEdit, onDelete, onFilter }: { section: string; books: Book[]; items: OrganizationItem[]; onOpen: (book: Book) => void; onCreate: () => void; onEdit: (item: OrganizationItem) => void; onDelete: (item: OrganizationItem) => void; onFilter: (item: OrganizationItem) => void }) {
+  const labels: Record<string, [string, string]> = {
+    categories: ["Categorias", "Classificações amplas da obra, automáticas ou criadas por você."],
+    tags: ["Tags", "Temas e palavras-chave específicas, automáticas ou personalizadas."],
+    collections: ["Coleções", "Estantes manuais para agrupar livros do seu jeito."],
+  };
   const [title, subtitle] = labels[section] ?? labels.categories;
   const kind = section as OrganizationKind;
   const inferredNames = kind === "categories" ? [...new Set(books.flatMap((book) => book.categories))] : kind === "tags" ? [...new Set(books.flatMap((book) => book.tags))] : [];
   const defaults: OrganizationItem[] = inferredNames.map((name, index) => ({ id: `inferred-${kind}-${index}`, kind, name, bookIds: books.filter((book) => kind === "categories" ? book.categories.includes(name) : book.tags.includes(name)).map((book) => book.id) }));
   const saved = items.filter((item) => item.kind === kind);
-  const groups = [...saved, ...defaults.filter((item) => !saved.some((savedItem) => savedItem.name.toLocaleLowerCase("pt-BR") === item.name.toLocaleLowerCase("pt-BR")))];
-  return <div className="page organize-page"><section className="page-heading"><div><span className="eyebrow">Organização flexível</span><h1>{title}</h1><p>{subtitle}</p></div><button className="primary-button" onClick={onCreate}>＋ Criar {section === "collections" ? "coleção" : section === "tags" ? "tag" : "categoria"}</button></section><div className="organize-grid">{groups.map((group) => { const groupBooks = group.bookIds.map((id) => books.find((book) => book.id === id)).filter((book): book is Book => Boolean(book)); return <article className="panel" key={group.id}><div className="collection-head"><span>{section === "tags" ? "#" : "◇"}</span><button className="collection-filter" onClick={() => onFilter(group)}><h2>{group.name}</h2><p>{groupBooks.length} {groupBooks.length === 1 ? "livro" : "livros"}</p></button><button onClick={() => onFilter(group)} aria-label={`Filtrar por ${group.name}`}>→</button></div><div className="cover-stack">{groupBooks.slice(0, 3).map((book) => <button key={book.id} onClick={() => onOpen(book)}><Cover book={book} size="small" /></button>)}</div></article>; })}</div></div>;
+  const groups = [
+    ...saved.map((item) => {
+      const automatic = defaults.find((candidate) => candidate.name.localeCompare(item.name, "pt-BR", { sensitivity: "base" }) === 0);
+      return { ...item, bookIds: [...new Set([...item.bookIds, ...(automatic?.bookIds ?? [])])], manual: true };
+    }),
+    ...defaults.filter((item) => !saved.some((savedItem) => savedItem.name.localeCompare(item.name, "pt-BR", { sensitivity: "base" }) === 0)).map((item) => ({ ...item, manual: false })),
+  ];
+  const createLabel = section === "collections" ? "coleção" : section === "tags" ? "tag" : "categoria";
+  return <div className="page organize-page"><section className="page-heading"><div><span className="eyebrow">Organização flexível</span><h1>{title}</h1><p>{subtitle}</p></div><button type="button" className="primary-button organization-create" onClick={onCreate}><span className="add-icon" aria-hidden="true">+</span>Criar {createLabel}</button></section><div className="organize-grid">{groups.map((group) => { const groupBooks = group.bookIds.map((id) => books.find((book) => book.id === id)).filter((book): book is Book => Boolean(book)); return <article className="panel" key={group.id}><div className="collection-head"><span>{section === "tags" ? "#" : section === "collections" ? "▤" : "◇"}</span><button className="collection-filter" onClick={() => onFilter(group)}><h2>{group.name}</h2><p>{groupBooks.length} {groupBooks.length === 1 ? "livro" : "livros"}{group.manual ? " · Manual" : " · Automática"}</p></button><div className="collection-actions">{group.manual && <><button type="button" onClick={() => onEdit(group)} aria-label={`Editar ${group.name}`}>✎</button><button type="button" onClick={() => onDelete(group)} aria-label={`Excluir ${group.name}`}>×</button></>}<button type="button" onClick={() => onFilter(group)} aria-label={`Filtrar por ${group.name}`}>→</button></div></div><div className="cover-stack">{groupBooks.slice(0, 3).map((book) => <button key={book.id} onClick={() => onOpen(book)}><Cover book={book} size="small" /></button>)}</div></article>; })}</div></div>;
 }
 
 function Integrations() {
@@ -923,30 +968,31 @@ function AddBookDialog({ books, onClose, onAdd }: { books: Book[]; onClose: () =
     finally { setLoading(false); }
   };
   const add = (result?: SearchResult) => {
-    const picked = result ?? { sourceId: crypto.randomUUID(), title, author, coverUrl: "", pages: 0, published: "", publisher: "", language: "", isbn: "", categories: [] };
+    const picked = result ?? { sourceId: crypto.randomUUID(), title, author, coverUrl: "", pages: 0, published: "", publisher: "", language: "", isbn: "", categories: [], tags: [] };
     if (!picked.title.trim() || !picked.author.trim()) { setError("Título e autor são obrigatórios."); return; }
     const duplicate = books.some((book) => book.title.toLowerCase() === picked.title.toLowerCase() && book.author.toLowerCase() === picked.author.toLowerCase());
     if (duplicate) { setError("Este livro já está na sua biblioteca."); return; }
-    const book: Book = { id: crypto.randomUUID(), title: picked.title, author: picked.author, coverUrl: picked.coverUrl, pages: picked.pages, currentPage: 0, status: "want", rating: 0, favorite: false, description: "", published: picked.published, publisher: picked.publisher, language: picked.language, isbn: picked.isbn, categories: picked.categories, tags: [], accent: "#7fd6ca", sessions: [] };
-    if (!isNativeRuntime()) fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...book, metadata: { published: book.published, publisher: book.publisher, language: book.language, isbn: book.isbn, categories: book.categories } }) }).catch(() => undefined);
+    const book: Book = { id: crypto.randomUUID(), title: picked.title, author: picked.author, coverUrl: picked.coverUrl, pages: picked.pages, currentPage: 0, status: "want", rating: 0, favorite: false, description: "", published: picked.published, publisher: picked.publisher, language: picked.language, isbn: picked.isbn, categories: picked.categories, tags: picked.tags, accent: "#7fd6ca", sessions: [] };
+    if (!isNativeRuntime()) fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...book, metadata: { published: book.published, publisher: book.publisher, language: book.language, isbn: book.isbn, categories: book.categories, tags: book.tags, accent: book.accent } }) }).catch(() => undefined);
     onAdd(book);
   };
-  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog add-dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><div className="dialog-head"><div><span className="eyebrow">Cadastro inteligente</span><h2 id="add-title">Adicionar livro</h2><p>Informe somente o essencial. Buscamos o restante.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="form-row"><label><span>Título do livro</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: Ensaio sobre a cegueira" /></label><label><span>Autor</span><input value={author} onChange={(event) => setAuthor(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: José Saramago" /></label></div><button className="primary-button search-metadata" onClick={search} disabled={loading}>{loading ? "Buscando metadados…" : "⌕ Buscar automaticamente"}</button>{error && <p className="form-error">{error}</p>}{results.length > 0 && <div className="search-results">{results.map((result) => <button key={result.sourceId} onClick={() => add(result)}><div className="result-cover">{result.coverUrl ? <img src={result.coverUrl} alt="" /> : <span>{result.title.slice(0, 1)}</span>}</div><span><b>{result.title}</b><small>{result.author} · {result.published || "Ano desconhecido"}</small><i>{result.pages ? `${result.pages} páginas` : "Páginas não informadas"}</i></span><strong>＋</strong></button>)}</div>}<div className="manual-add"><span>Não encontrou?</span><button onClick={() => add()}>Adicionar com estes dados</button></div><footer>Metadados fornecidos pela Open Library. Suas edições manuais nunca serão sobrescritas.</footer></section></div>;
+  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog add-dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><div className="dialog-head"><div><span className="eyebrow">Cadastro inteligente</span><h2 id="add-title">Adicionar livro</h2><p>Informe somente o essencial. Buscamos o restante.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="form-row"><label><span>Título do livro</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: Ensaio sobre a cegueira" /></label><label><span>Autor</span><input value={author} onChange={(event) => setAuthor(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: José Saramago" /></label></div><button className="primary-button search-metadata" onClick={search} disabled={loading}>{loading ? "Buscando metadados…" : "⌕ Buscar automaticamente"}</button>{error && <p className="form-error">{error}</p>}{results.length > 0 && <div className="search-results">{results.map((result) => <button key={result.sourceId} onClick={() => add(result)}><div className="result-cover">{result.coverUrl ? <img src={result.coverUrl} alt="" /> : <span>{result.title.slice(0, 1)}</span>}</div><span><b>{result.title}</b><small>{result.author} · {result.published || "Ano desconhecido"}</small><i>{result.pages ? `${result.pages} páginas` : "Páginas não informadas"}</i></span><strong className="add-icon">+</strong></button>)}</div>}<div className="manual-add"><span>Não encontrou?</span><button onClick={() => add()}>Adicionar com estes dados</button></div><footer>Metadados fornecidos pela Open Library. Suas edições manuais nunca serão sobrescritas.</footer></section></div>;
 }
 
-function OrganizationDialog({ kind, books, existing, onClose, onSave }: { kind: OrganizationKind; books: Book[]; existing: OrganizationItem[]; onClose: () => void; onSave: (item: OrganizationItem) => void }) {
-  const [name, setName] = useState("");
-  const [bookIds, setBookIds] = useState<string[]>([]);
+function OrganizationDialog({ kind, item, books, existing, onClose, onSave }: { kind: OrganizationKind; item?: OrganizationItem; books: Book[]; existing: OrganizationItem[]; onClose: () => void; onSave: (item: OrganizationItem) => void }) {
+  const [name, setName] = useState(item?.name ?? "");
+  const [bookIds, setBookIds] = useState<string[]>(item?.bookIds ?? []);
   const [error, setError] = useState("");
   const singular = kind === "categories" ? "categoria" : kind === "tags" ? "tag" : "coleção";
   const toggleBook = (id: string) => setBookIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   const submit = () => {
     const normalized = name.trim().replace(/\s+/g, " ");
     if (!normalized) { setError(`Informe o nome da ${singular}.`); return; }
-    if (existing.some((item) => item.kind === kind && item.name.toLocaleLowerCase("pt-BR") === normalized.toLocaleLowerCase("pt-BR"))) { setError(`Esta ${singular} já existe.`); return; }
-    onSave({ id: crypto.randomUUID(), kind, name: normalized, bookIds });
+    if (existing.some((existingItem) => existingItem.id !== item?.id && existingItem.kind === kind && existingItem.name.localeCompare(normalized, "pt-BR", { sensitivity: "base" }) === 0)) { setError(`Esta ${singular} já existe.`); return; }
+    onSave({ id: item?.id ?? crypto.randomUUID(), kind, name: normalized, bookIds, createdAt: item?.createdAt });
   };
-  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog organization-dialog" role="dialog" aria-modal="true" aria-labelledby="organization-title"><div className="dialog-head"><div><span className="eyebrow">Organização</span><h2 id="organization-title">Criar {singular}</h2><p>Defina um nome e escolha os livros que farão parte.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><label className="organization-name"><span>Nome da {singular}</span><input autoFocus value={name} maxLength={60} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submit()} placeholder={`Ex.: ${kind === "categories" ? "Ensaios" : kind === "tags" ? "para pesquisar" : "Favoritos do ano"}`} /></label><fieldset className="organization-books"><legend>Livros nesta {singular}</legend>{books.map((book) => <label key={book.id}><input type="checkbox" checked={bookIds.includes(book.id)} onChange={() => toggleBook(book.id)} /><Cover book={book} size="small" /><span><b>{book.title}</b><small>{book.author}</small></span></label>)}</fieldset>{error && <p className="form-error">{error}</p>}<button className="primary-button dialog-submit" onClick={submit}>Criar {singular}</button></section></div>;
+  const action = item ? "Editar" : "Criar";
+  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog organization-dialog" role="dialog" aria-modal="true" aria-labelledby="organization-title"><div className="dialog-head"><div><span className="eyebrow">Organização manual</span><h2 id="organization-title">{action} {singular}</h2><p>O conteúdo manual complementa os metadados automáticos e nunca os substitui.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><label className="organization-name"><span>Nome da {singular}</span><input autoFocus value={name} maxLength={60} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submit()} placeholder={`Ex.: ${kind === "categories" ? "Ensaios" : kind === "tags" ? "Inteligência Artificial" : "Favoritos do ano"}`} /></label><fieldset className="organization-books"><legend>Livros nesta {singular}</legend>{books.map((book) => <label key={book.id}><input type="checkbox" checked={bookIds.includes(book.id)} onChange={() => toggleBook(book.id)} /><Cover book={book} size="small" /><span><b>{book.title}</b><small>{book.author}</small></span></label>)}</fieldset>{error && <p className="form-error">{error}</p>}<button className="primary-button dialog-submit" onClick={submit}>{item ? "Salvar alterações" : `Criar ${singular}`}</button></section></div>;
 }
 
 function ReadingDialog({ book, onClose, onSave }: { book: Book; onClose: () => void; onSave: (book: Book) => void }) {

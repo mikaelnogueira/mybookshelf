@@ -1,3 +1,5 @@
+import { classifyBookSubjects } from "../../../../lib/bookClassification";
+
 type OpenLibraryDoc = {
   key?: string;
   title?: string;
@@ -36,20 +38,23 @@ export async function GET(request: Request) {
 
     if (!response.ok) throw new Error("Open Library indisponível");
     const payload = (await response.json()) as { docs?: OpenLibraryDoc[] };
-    const books = (payload.docs ?? []).map((book) => ({
-      sourceId: book.key ?? crypto.randomUUID(),
-      title: book.title ?? "Título não informado",
-      author: book.author_name?.[0] ?? "Autor não informado",
-      coverUrl: book.cover_i
-        ? `https://covers.openlibrary.org/b/id/${book.cover_i}-L.jpg`
-        : "",
-      pages: book.number_of_pages_median ?? 0,
-      published: book.first_publish_year?.toString() ?? "",
-      publisher: book.publisher?.[0] ?? "",
-      language: book.language?.[0]?.toUpperCase() ?? "",
-      isbn: book.isbn?.[0] ?? "",
-      categories: (book.subject ?? []).slice(0, 3),
-    }));
+    const books = (payload.docs ?? []).map((book) => {
+      const classification = classifyBookSubjects(book.subject ?? []);
+      return {
+        sourceId: book.key ?? crypto.randomUUID(),
+        title: book.title ?? "Título não informado",
+        author: book.author_name?.[0] ?? "Autor não informado",
+        coverUrl: book.cover_i
+          ? `https://covers.openlibrary.org/b/id/${book.cover_i}-L.jpg`
+          : "",
+        pages: book.number_of_pages_median ?? 0,
+        published: book.first_publish_year?.toString() ?? "",
+        publisher: book.publisher?.[0] ?? "",
+        language: book.language?.[0]?.toUpperCase() ?? "",
+        isbn: book.isbn?.[0] ?? "",
+        ...classification,
+      };
+    });
 
     return Response.json({ books });
   } catch {

@@ -66,6 +66,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .app-shell[data-style="brutal"] h1,
 .app-shell[data-style="brutal"] h2 { font-family: var(--font-sans), sans-serif; font-weight: 780; letter-spacing: -0.055em; }
 .app-shell[data-style="brutal"] .sidebar { border-right: 2px solid var(--text); }
+.app-shell[data-style="brutal"] .book-collection.view-grid,
+.app-shell[data-style="brutal"] .book-collection.view-carousel { gap: 20px; }
+.app-shell[data-style="brutal"] .view-grid .library-book,
+.app-shell[data-style="brutal"] .view-carousel .library-book { padding: 0; overflow: visible; }
+.app-shell[data-style="brutal"] .view-grid .library-book-copy,
+.app-shell[data-style="brutal"] .view-carousel .library-book-copy { padding: 10px; }
+.app-shell[data-style="brutal"] .library-tools { padding: 12px; border: 2px solid var(--text); }
 
 .app-shell[data-style="glass"] {
   --bg: #091316;
@@ -150,6 +157,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .icon-button:hover { color: var(--text); background: var(--surface); }
 .primary-button, .quiet-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 14px; border-radius: 9px; font-size: 10px; font-weight: 700; cursor: pointer; transition: transform 130ms ease, filter 130ms ease; }
 .primary-button { color: #131710; background: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 75%, #fff); }
+.add-icon { display: inline-grid; place-items: center; min-width: 1em; min-height: 1em; font-family: Arial, Helvetica, sans-serif; font-size: 1.45em; font-weight: 500; line-height: 1; }
+.add-book-button { position: relative; isolation: isolate; }
 .primary-button:hover { filter: brightness(1.06); transform: translateY(-1px); }
 .primary-button:disabled { opacity: 0.65; cursor: wait; }
 .quiet-button { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
@@ -375,6 +384,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .collection-head button { color: var(--faint); background: none; border: 0; }
 .collection-head .collection-filter { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; padding: 0; color: var(--text); text-align: left; cursor: pointer; }
 .collection-head .collection-filter:hover h2 { color: var(--accent); }
+.collection-actions { display: flex; align-items: center; gap: 2px; }
+.collection-actions button { display: grid; place-items: center; width: 25px; height: 25px; padding: 0; border-radius: 6px; cursor: pointer; }
+.collection-actions button:hover { color: var(--text); background: var(--surface-2); }
 .cover-stack { display: flex; margin-top: 18px; padding-left: 5px; }
 .cover-stack button { margin-left: -5px; padding: 0; background: none; border: 0; cursor: pointer; transition: transform 120ms ease; }
 .cover-stack button:hover { z-index: 2; transform: translateY(-4px); }
@@ -548,7 +560,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   .mobile-brand { display: block; padding: 0; }
   .mobile-brand .brand-mark { width: 30px; height: 30px; }
   .global-search { width: 100%; }
-  .global-search kbd, .top-actions .icon-button:first-child { display: none; }
+  .global-search kbd { display: none; }
   .top-actions { flex: none; gap: 6px; }
   .top-actions .icon-button, .top-actions .primary-button { display: grid; place-items: center; width: 36px; height: 36px; min-height: 36px; padding: 0; line-height: 1; }
   .top-actions .primary-button { font-size: 0; }

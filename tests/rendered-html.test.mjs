@@ -13,7 +13,9 @@ test("o build contém a experiência MyBookshelf", async () => {
   const client = await readFile(new URL(clientFiles[0], clientDir), "utf8");
   assert.match(server, /MyBookshelf/);
   assert.match(client, /Sua biblioteca viva/);
-  assert.match(client, /Boa noite, leitor/);
+  assert.match(client, /Bom dia/);
+  assert.match(client, /Boa tarde/);
+  assert.match(client, /Boa noite/);
   assert.match(client, /Comece sua biblioteca/);
   assert.match(client, /Bem-vindo ao MyBookshelf/);
   assert.match(client, /Pular tutorial/);
@@ -28,8 +30,31 @@ test("o build contém a experiência MyBookshelf", async () => {
   assert.match(client, /Organização flexível/);
   assert.match(server, /Não foi possível excluir o livro agora/);
   assert.match(server, /Não foi possível salvar este item agora/);
+  assert.match(server, /Não foi possível atualizar este item agora/);
+  assert.match(server, /Não foi possível excluir este item agora/);
   assert.match(server, /As estatísticas serão inicializadas quando a conexão retornar/);
   assert.doesNotMatch(`${server}${client}`, /codex-preview|Building your site|react-loading-skeleton/i);
+});
+
+test("mantém temas, saudação e organização manual consistentes", async () => {
+  const [app, css, classification, organizationApi] = await Promise.all([
+    readFile(new URL("../app/BookshelfApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/bookClassification.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/organization/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(app, /window\.setInterval\(\(\) => setToday\(new Date\(\)\), 60_000\)/);
+  assert.match(app, /greetingFor\(today\)/);
+  assert.match(app, /className="primary-button add-book-button"/);
+  assert.match(app, /Salvar alterações/);
+  assert.match(app, /metadados automáticos e nunca os substitui/);
+  assert.doesNotMatch(css, /top-actions \.icon-button:first-child \{ display: none/);
+  assert.match(css, /data-style="brutal"\] \.view-grid \.library-book-copy,[\s\S]*padding: 10px/);
+  assert.match(css, /\.add-icon \{ display: inline-grid; place-items: center/);
+  assert.match(classification, /Ficção científica/);
+  assert.match(classification, /const tags = clean/);
+  assert.match(organizationApi, /export async function PATCH/);
+  assert.match(organizationApi, /export async function DELETE/);
 });
 
 test("as duas versões iniciam vazias e respeitam a área segura móvel", async () => {
