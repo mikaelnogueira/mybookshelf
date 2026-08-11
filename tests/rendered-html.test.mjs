@@ -22,7 +22,8 @@ test("o build contém a experiência MyBookshelf", async () => {
   assert.match(client, /mybookshelf-tutorial-v1/);
   assert.match(client, /mybookshelf-stats-initialized-v1/);
   assert.match(client, /mybookshelf-organizations-v1/);
-  assert.match(client, /mybookshelf-first-access-v2/);
+  assert.match(client, /mybookshelf-web-first-user-v3/);
+  assert.match(client, /mybookshelf-native-first-user-v3/);
   assert.match(client, /Adicionar primeiro livro/);
   assert.match(client, /Organização flexível/);
   assert.match(server, /Não foi possível excluir o livro agora/);
@@ -31,18 +32,22 @@ test("o build contém a experiência MyBookshelf", async () => {
   assert.doesNotMatch(`${server}${client}`, /codex-preview|Building your site|react-loading-skeleton/i);
 });
 
-test("a Web inicia vazia e mantém a capa Glass sem padding", async () => {
+test("as duas versões iniciam vazias e respeitam a área segura móvel", async () => {
   const [app, css, resetMigration] = await Promise.all([
     readFile(new URL("../app/BookshelfApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
-    readFile(new URL("../drizzle/0002_first_access_reset.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0003_first_user_full_reset.sql", import.meta.url), "utf8"),
   ]);
   assert.match(app, /useState<Book\[\]>\(\[\]\)/);
   assert.match(app, /\["reading", "read", "paused", "abandoned", "want"\]/);
   assert.match(app, /mobileStorePut\("library", "organizations", organizations\)/);
+  assert.match(app, /indexedDB\.deleteDatabase\("mybookshelf-mobile-v1"\)/);
   assert.doesNotMatch(app, /tutorialStep !== null && !isNativeRuntime/);
+  assert.doesNotMatch(app, /Você está a 28 páginas|184 páginas|76 dias com leitura/);
   assert.match(css, /view-carousel \.library-book \{ padding: 0;/);
   assert.match(css, /view-carousel \.library-book-copy \{ padding: 10px;/);
+  assert.match(css, /--safe-top: max\(env\(safe-area-inset-top, 0px\), 12px\)/);
+  assert.match(css, /top-actions \.icon-button, \.top-actions \.primary-button \{ display: grid; place-items: center;/);
   assert.match(resetMigration, /DELETE FROM `books`/);
   assert.match(resetMigration, /DELETE FROM `user_stats`/);
 });

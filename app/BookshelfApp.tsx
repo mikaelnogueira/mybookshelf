@@ -8,7 +8,7 @@ type VisualStyle = "minimal" | "brutal" | "glass";
 type Theme = "dark" | "light";
 type OrganizationKind = "categories" | "tags" | "collections";
 
-type Session = { date: string; start: number; end: number };
+type Session = { date: string; start: number; end: number; isoDate?: string };
 type Book = {
   id: string;
   title: string;
@@ -242,6 +242,30 @@ function todayLabel() {
   }).format(new Date());
 }
 
+function localDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function sessionDateKey(session: Session) {
+  if (session.isoDate) return session.isoDate;
+  const match = session.date.toLocaleLowerCase("pt-BR").match(/(\d{1,2})\s+([a-zç]+)/);
+  if (!match) return "";
+  const months: Record<string, number> = { jan: 0, fev: 1, mar: 2, abr: 3, mai: 4, jun: 5, jul: 6, ago: 7, set: 8, out: 9, nov: 10, dez: 11 };
+  const month = months[match[2].slice(0, 3)];
+  if (month === undefined) return "";
+  const now = new Date();
+  const parsed = new Date(now.getFullYear(), month, Number(match[1]), 12);
+  if (parsed.getTime() > now.getTime() + 7 * 86_400_000) parsed.setFullYear(parsed.getFullYear() - 1);
+  return localDateKey(parsed);
+}
+
+function pagesInSession(session: Session) {
+  return Math.max(0, session.end - session.start + 1);
+}
+
 async function initializeStats() {
   if (isNativeRuntime()) {
     const existing = await mobileStoreGet<{ initializedAt: string }>("library", "stats");
@@ -294,6 +318,15 @@ async function mobileStorePut(storeName: "library" | "covers", key: string, valu
     transaction.objectStore(storeName).put(value, key);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function resetMobileStorage() {
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase("mybookshelf-mobile-v1");
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => resolve();
   });
 }
 
@@ -375,16 +408,7 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-function Heatmap({ empty = false }: { empty?: boolean }) {
-  const cells = useMemo(
-    () =>
-      Array.from({ length: 119 }, (_, index) => {
-        if (empty) return 0;
-        const wave = (index * 7 + Math.floor(index / 11) * 3) % 17;
-        return index > 99 ? (wave % 5 === 0 ? 0 : Math.min(4, Math.ceil(wave / 4))) : wave > 10 ? 0 : Math.min(4, Math.ceil(wave / 3));
-      }),
-    [empty],
-  );
+function Heatmap({ cells = Array.from({ length: 119 }, () => 0) }: { cells?: number[] }) {
   return (
     <div className="heatmap-wrap">
       <div className="heatmap-months"><span>mai</span><span>jun</span><span>jul</span><span>ago</span></div>
@@ -424,81 +448,78 @@ export function BookshelfApp() {
 
   useEffect(() => {
     const native = isNativeRuntime();
-    if (!native && localStorage.getItem("mybookshelf-first-access-v2") !== "ready") {
-      [
-        "mybookshelf-library-v1",
-        "mybookshelf-organizations-v1",
-        "mybookshelf-stats-initialized-v1",
-        "mybookshelf-tutorial-v1",
-        "mybookshelf-settings-v1",
-      ].forEach((key) => localStorage.removeItem(key));
-      localStorage.setItem("mybookshelf-first-access-v2", "ready");
-    }
+    let active = true;
     setOnline(navigator.onLine);
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
-    const cached = native ? null : localStorage.getItem("mybookshelf-library-v1");
-    const settings = localStorage.getItem("mybookshelf-settings-v1");
-    if (cached) {
-      try { setBooks(JSON.parse(cached) as Book[]); } catch { /* keep safe seed */ }
-    }
-    if (settings) {
-      try {
-        const parsed = JSON.parse(settings) as { theme?: Theme; style?: VisualStyle; accent?: string };
-        if (parsed.theme) setTheme(parsed.theme);
-        if (parsed.style) setStyle(parsed.style);
-        if (parsed.accent) setAccent(parsed.accent);
-      } catch { /* keep defaults */ }
-    }
-    setSettingsReady(true);
-    const tutorialCompleted = localStorage.getItem("mybookshelf-tutorial-v1") === "completed";
-    if (!tutorialCompleted) setTutorialStep(0);
-    if (tutorialCompleted) initializeStats().catch(() => undefined);
-    if (!native) {
-      const cachedOrganizations = localStorage.getItem("mybookshelf-organizations-v1");
-      if (cachedOrganizations) {
-        try { setOrganizations(JSON.parse(cachedOrganizations) as OrganizationItem[]); } catch { /* use server state */ }
+
+    const initialize = async () => {
+      const resetMarker = native ? "mybookshelf-native-first-user-v3" : "mybookshelf-web-first-user-v3";
+      if (localStorage.getItem(resetMarker) !== "ready") {
+        localStorage.clear();
+        if (native) await resetMobileStorage().catch(() => undefined);
+        localStorage.setItem(resetMarker, "ready");
       }
-      fetch("/api/organization")
-        .then((response) => response.json())
-        .then((data: { items?: OrganizationItem[] }) => { if (data.items?.length) setOrganizations(data.items); })
-        .catch(() => undefined)
-        .finally(() => { organizationsHydrated.current = true; });
-    }
-    if (native) {
-      mobileStoreGet<Book[]>("library", "books")
-        .then((stored) => { if (stored?.length) setBooks(stored); })
-        .catch(() => undefined)
-        .finally(() => { hydrated.current = true; });
-      mobileStoreGet<OrganizationItem[]>("library", "organizations")
-        .then((stored) => { if (stored?.length) setOrganizations(stored); })
-        .catch(() => undefined)
-        .finally(() => { organizationsHydrated.current = true; });
-    } else fetch("/api/library")
-      .then((response) => response.json())
-      .then((data: { books?: Array<Record<string, unknown>> }) => {
-        if (!data.books?.length) return;
-        setBooks((current) => {
-          const currentIds = new Set(current.map((book) => book.id));
-          const synced = data.books!
-            .filter((item) => !currentIds.has(String(item.id)))
-            .map((item) => ({
-              id: String(item.id), title: String(item.title), author: String(item.author),
-              coverUrl: String(item.coverUrl ?? ""), pages: Number(item.pages ?? 0),
-              currentPage: Number(item.currentPage ?? 0), status: (item.status ?? "want") as Status,
-              rating: Number(item.rating ?? 0), favorite: Boolean(item.favorite),
-              description: String(item.description ?? ""), published: "", publisher: "",
-              language: "", isbn: "", categories: [], tags: [], accent: "#7fd6ca", sessions: [],
-            }));
-          return [...synced, ...current];
-        });
-      })
-      .catch(() => undefined)
-      .finally(() => { hydrated.current = true; });
+
+      const settings = localStorage.getItem("mybookshelf-settings-v1");
+      if (settings) {
+        try {
+          const parsed = JSON.parse(settings) as { theme?: Theme; style?: VisualStyle; accent?: string };
+          if (parsed.theme) setTheme(parsed.theme);
+          if (parsed.style) setStyle(parsed.style);
+          if (parsed.accent) setAccent(parsed.accent);
+        } catch { /* keep defaults */ }
+      }
+      if (!active) return;
+      setSettingsReady(true);
+      const tutorialCompleted = localStorage.getItem("mybookshelf-tutorial-v1") === "completed";
+      if (!tutorialCompleted) setTutorialStep(0);
+      else initializeStats().catch(() => undefined);
+
+      if (native) {
+        const [storedBooks, storedOrganizations] = await Promise.all([
+          mobileStoreGet<Book[]>("library", "books").catch(() => undefined),
+          mobileStoreGet<OrganizationItem[]>("library", "organizations").catch(() => undefined),
+        ]);
+        if (active && storedBooks?.length) setBooks(storedBooks);
+        if (active && storedOrganizations?.length) setOrganizations(storedOrganizations);
+      } else {
+        const cached = localStorage.getItem("mybookshelf-library-v1");
+        const cachedOrganizations = localStorage.getItem("mybookshelf-organizations-v1");
+        if (cached) {
+          try { setBooks(JSON.parse(cached) as Book[]); } catch { /* use server state */ }
+        }
+        if (cachedOrganizations) {
+          try { setOrganizations(JSON.parse(cachedOrganizations) as OrganizationItem[]); } catch { /* use server state */ }
+        }
+        const [libraryData, organizationData] = await Promise.all([
+          fetch("/api/library").then((response) => response.json()).catch(() => ({ books: [] })),
+          fetch("/api/organization").then((response) => response.json()).catch(() => ({ items: [] })),
+        ]) as [{ books?: Array<Record<string, unknown>> }, { items?: OrganizationItem[] }];
+        if (active && libraryData.books?.length) {
+          setBooks(libraryData.books.map((item) => ({
+            id: String(item.id), title: String(item.title), author: String(item.author),
+            coverUrl: String(item.coverUrl ?? ""), pages: Number(item.pages ?? 0),
+            currentPage: Number(item.currentPage ?? 0), status: (item.status ?? "want") as Status,
+            rating: Number(item.rating ?? 0), favorite: Boolean(item.favorite),
+            description: String(item.description ?? ""), published: "", publisher: "",
+            language: "", isbn: "", categories: [], tags: [], accent: "#7fd6ca", sessions: [],
+          })));
+        }
+        if (active && organizationData.items?.length) setOrganizations(organizationData.items);
+      }
+      hydrated.current = true;
+      organizationsHydrated.current = true;
+    };
+    initialize().catch(() => {
+      hydrated.current = true;
+      organizationsHydrated.current = true;
+    });
     if (!native && "serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     return () => {
+      active = false;
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
     };
@@ -575,7 +596,7 @@ export function BookshelfApp() {
     return result;
   }, [books, filter, organizationFilter, query, section]);
 
-  const readingBook = books.find((book) => book.status === "reading") ?? books[0];
+  const readingBook = books.find((book) => book.status === "reading");
 
   const navigate = (next: string) => {
     setSection(next);
@@ -705,61 +726,102 @@ export function BookshelfApp() {
 
 function Dashboard({ books, readingBook, onOpen, onRead, onAdd, onNavigate }: { books: Book[]; readingBook?: Book; onOpen: (book: Book) => void; onRead: () => void; onAdd: () => void; onNavigate: (section: string) => void }) {
   const read = books.filter((book) => book.status === "read").length;
-  if (!readingBook) {
-    return <div className="page dashboard-page first-access-dashboard"><section className="page-heading dashboard-heading"><div><span className="eyebrow">{todayLabel()}</span><h1>Boa noite, leitor.</h1><p>Sua biblioteca está pronta para receber o primeiro livro.</p></div><div className="heading-quote"><i>“</i><p>Todo leitor começa por uma primeira página.<small>— MyBookshelf</small></p></div></section><div className="dashboard-grid"><section className="current-card panel first-access-card"><div className="empty-state"><span>＋</span><h2>Comece sua biblioteca</h2><p>Adicione seu primeiro livro para acompanhar leituras, páginas e anotações.</p><button className="primary-button" onClick={onAdd}>Adicionar primeiro livro</button></div></section><section className="quick-stats"><article className="metric panel"><span className="metric-icon">⌁</span><div><small>Páginas hoje</small><b>0</b><p>Nenhuma leitura registrada</p></div></article><article className="metric panel"><span className="metric-icon">⌁</span><div><small>Sequência atual</small><b>0 <em>dias</em></b><p>Recorde: 0 dias</p></div></article><article className="metric panel"><span className="metric-icon">◉</span><div><small>Livros em 2026</small><b>0</b><p>Comece quando quiser</p></div></article></section><section className="weekly panel"><div className="section-label"><div><span>Leitura esta semana</span><small>0 páginas · 0 min</small></div></div><div className="bar-chart" aria-label="Nenhuma página lida nesta semana">{[0, 0, 0, 0, 0, 0, 0].map((value, index) => <div key={index}><span style={{ height: "4%" }} /><small>{["seg", "ter", "qua", "qui", "sex", "sáb", "dom"][index]}</small></div>)}</div></section><section className="streak-card panel"><div className="section-label"><div><span>Sua constância</span><small>Nenhuma leitura registrada ainda</small></div><div className="streak-badge">◒ 0 dias</div></div><Heatmap empty /></section></div></div>;
+  const pagesByDate = new Map<string, number>();
+  books.flatMap((book) => book.sessions).forEach((session) => {
+    const key = sessionDateKey(session);
+    if (key) pagesByDate.set(key, (pagesByDate.get(key) ?? 0) + pagesInSession(session));
+  });
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  const recentDays = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (6 - index));
+    return date;
+  });
+  const weeklyValues = recentDays.map((date) => pagesByDate.get(localDateKey(date)) ?? 0);
+  const weeklyPages = weeklyValues.reduce((total, value) => total + value, 0);
+  const maxWeekly = Math.max(1, ...weeklyValues);
+  const dateKeys = [...pagesByDate.keys()].sort();
+  const dateSet = new Set(dateKeys);
+  let streakCursor = new Date(today);
+  if (!dateSet.has(localDateKey(streakCursor))) streakCursor.setDate(streakCursor.getDate() - 1);
+  let currentStreak = 0;
+  while (dateSet.has(localDateKey(streakCursor))) {
+    currentStreak += 1;
+    streakCursor.setDate(streakCursor.getDate() - 1);
   }
+  let bestStreak = 0;
+  let runningStreak = 0;
+  let previousDate: Date | null = null;
+  dateKeys.forEach((key) => {
+    const currentDate = new Date(`${key}T12:00:00`);
+    runningStreak = previousDate && Math.round((currentDate.getTime() - previousDate.getTime()) / 86_400_000) === 1 ? runningStreak + 1 : 1;
+    bestStreak = Math.max(bestStreak, runningStreak);
+    previousDate = currentDate;
+  });
+  const heatmapCells = Array.from({ length: 119 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (118 - index));
+    const pages = pagesByDate.get(localDateKey(date)) ?? 0;
+    return pages === 0 ? 0 : pages < 15 ? 1 : pages < 35 ? 2 : pages < 60 ? 3 : 4;
+  });
+  const goalProgress = Math.min(100, Math.round((read / 24) * 100));
+  const noteBook = books.find((book) => book.note?.trim());
+  const queue = books.filter((book) => book.status === "want" || book.status === "paused").slice(0, 2);
   return (
     <div className="page dashboard-page">
       <section className="page-heading dashboard-heading">
-        <div><span className="eyebrow">{todayLabel()}</span><h1>Boa noite, leitor.</h1><p>Você está a 28 páginas de manter sua melhor sequência.</p></div>
+        <div><span className="eyebrow">{todayLabel()}</span><h1>Boa noite, leitor.</h1><p>{pagesByDate.size ? `${pagesByDate.get(todayKey) ?? 0} páginas registradas hoje.` : "Suas métricas começam com a primeira leitura registrada."}</p></div>
         <div className="heading-quote"><i>“</i><p>Um livro é uma prova de que os seres humanos são capazes de fazer magia.<small>— Carl Sagan</small></p></div>
       </section>
 
       <div className="dashboard-grid">
-        <section className="current-card panel">
-          <div className="section-label"><span>Leitura atual</span><button onClick={() => onOpen(readingBook)}>Ver detalhes →</button></div>
-          <div className="current-book">
-            <Cover book={readingBook} size="large" />
-            <div className="current-copy">
-              <span className="status-pill"><i /> Em andamento</span>
-              <h2>{readingBook.title}</h2><p className="book-author">{readingBook.author}</p>
-              <div className="progress-copy"><b>{progress(readingBook)}%</b><span>Página {readingBook.currentPage} de {readingBook.pages}</span></div>
-              <ProgressBar value={progress(readingBook)} />
-              <p className="estimate">≈ 3h 40min restantes</p>
-              <div className="current-actions"><button className="primary-button" onClick={onRead}>＋ Registrar leitura</button><button className="quiet-button" onClick={() => onOpen(readingBook)}>Continuar</button></div>
+        <section className={`current-card panel ${readingBook ? "" : "first-access-card"}`}>
+          {readingBook ? <>
+            <div className="section-label"><span>Leitura atual</span><button onClick={() => onOpen(readingBook)}>Ver detalhes →</button></div>
+            <div className="current-book">
+              <Cover book={readingBook} size="large" />
+              <div className="current-copy">
+                <span className="status-pill"><i /> Em andamento</span>
+                <h2>{readingBook.title}</h2><p className="book-author">{readingBook.author}</p>
+                <div className="progress-copy"><b>{progress(readingBook)}%</b><span>Página {readingBook.currentPage} de {readingBook.pages}</span></div>
+                <ProgressBar value={progress(readingBook)} />
+                <p className="estimate">≈ {Math.max(0, Math.round((readingBook.pages - readingBook.currentPage) * 1.2))} min restantes</p>
+                <div className="current-actions"><button className="primary-button" onClick={onRead}>＋ Registrar leitura</button><button className="quiet-button" onClick={() => onOpen(readingBook)}>Continuar</button></div>
+              </div>
             </div>
-          </div>
+          </> : <div className="empty-state"><span>{books.length ? "◐" : "＋"}</span><h2>{books.length ? "Nenhuma leitura em andamento" : "Comece sua biblioteca"}</h2><p>{books.length ? "Mova um livro para Lendo quando quiser começar." : "Adicione seu primeiro livro para acompanhar leituras, páginas e anotações."}</p><button className="primary-button" onClick={books.length ? () => onNavigate("library") : onAdd}>{books.length ? "Abrir biblioteca" : "Adicionar primeiro livro"}</button></div>}
         </section>
 
         <section className="quick-stats">
-          <article className="metric panel"><span className="metric-icon">⌁</span><div><small>Páginas hoje</small><b>46</b><p><i>↗ 12%</i> vs. média</p></div></article>
-          <article className="metric panel"><span className="metric-icon">⌁</span><div><small>Sequência atual</small><b>12 <em>dias</em></b><p>Recorde: 18 dias</p></div></article>
-          <article className="metric panel"><span className="metric-icon">◉</span><div><small>Livros em 2026</small><b>{read + 9}</b><p>Meta: 24 livros</p></div></article>
+          <article className="metric panel"><span className="metric-icon">⌁</span><div><small>Páginas hoje</small><b>{pagesByDate.get(todayKey) ?? 0}</b><p>{pagesByDate.has(todayKey) ? "Registradas hoje" : "Nenhuma leitura registrada"}</p></div></article>
+          <article className="metric panel"><span className="metric-icon">⌁</span><div><small>Sequência atual</small><b>{currentStreak} <em>{currentStreak === 1 ? "dia" : "dias"}</em></b><p>Recorde: {bestStreak} {bestStreak === 1 ? "dia" : "dias"}</p></div></article>
+          <article className="metric panel"><span className="metric-icon">◉</span><div><small>Livros em 2026</small><b>{read}</b><p>{read ? "Livros concluídos" : "Nenhum livro concluído"}</p></div></article>
         </section>
 
         <section className="weekly panel">
-          <div className="section-label"><div><span>Leitura esta semana</span><small>184 páginas · 3h 12min</small></div><button>Últimos 7 dias⌄</button></div>
+          <div className="section-label"><div><span>Leitura esta semana</span><small>{weeklyPages} páginas · {Math.round(weeklyPages * 1.2)} min</small></div><button>Últimos 7 dias⌄</button></div>
           <div className="bar-chart" aria-label="Páginas lidas por dia da semana">
-            {[18, 31, 22, 46, 28, 0, 39].map((value, index) => <div key={index}><span className={index === 3 ? "today" : ""} style={{ height: `${Math.max(4, value * 1.75)}%` }}><b>{value || ""}</b></span><small>{["seg", "ter", "qua", "qui", "sex", "sáb", "dom"][index]}</small></div>)}
+            {weeklyValues.map((value, index) => <div key={localDateKey(recentDays[index])}><span className={index === 6 ? "today" : ""} style={{ height: `${Math.max(4, Math.round((value / maxWeekly) * 92))}%` }}><b>{value || ""}</b></span><small>{new Intl.DateTimeFormat("pt-BR", { weekday: "short" }).format(recentDays[index]).slice(0, 3)}</small></div>)}
           </div>
         </section>
 
         <section className="streak-card panel">
-          <div className="section-label"><div><span>Sua constância</span><small>76 dias com leitura nos últimos 4 meses</small></div><div className="streak-badge">◒ 12 dias</div></div>
-          <Heatmap />
+          <div className="section-label"><div><span>Sua constância</span><small>{pagesByDate.size} {pagesByDate.size === 1 ? "dia com leitura" : "dias com leitura"} nos últimos registros</small></div><div className="streak-badge">◒ {currentStreak} {currentStreak === 1 ? "dia" : "dias"}</div></div>
+          <Heatmap cells={heatmapCells} />
         </section>
 
-        <section className="recent-books panel">
+        {books.length > 0 && <section className="recent-books panel">
           <div className="section-label"><div><span>Adicionados recentemente</span><small>Continue construindo sua biblioteca</small></div><button onClick={() => onNavigate("library")}>Ver biblioteca →</button></div>
           <div className="recent-row">
-            {books.slice(1, 6).map((book) => <button className="mini-book" key={book.id} onClick={() => onOpen(book)}><Cover book={book} /><span><b>{book.title}</b><small>{book.author}</small><i>{statusLabels[book.status]}</i></span></button>)}
+            {books.slice(0, 5).map((book) => <button className="mini-book" key={book.id} onClick={() => onOpen(book)}><Cover book={book} /><span><b>{book.title}</b><small>{book.author}</small><i>{statusLabels[book.status]}</i></span></button>)}
           </div>
-        </section>
+        </section>}
 
         <aside className="dashboard-rail">
-          <section className="goal-card panel"><div className="section-label"><span>Meta anual</span><button>Editar</button></div><div className="goal-ring"><div><b>13</b><small>de 24 livros</small></div></div><p><span>54% concluída</span><b>11 restantes</b></p><ProgressBar value={54} /><small>No ritmo atual, você conclui em novembro.</small></section>
-          <section className="note-card panel"><div className="section-label"><span>Nota em destaque</span><button>···</button></div><p>“O mistério da vida não é um problema a resolver, mas uma realidade a experimentar.”</p><div><span className="tiny-cover" style={{ background: readingBook.accent }} /><span><b>{readingBook.title}</b><small>Página 146</small></span></div></section>
-          <section className="next-card panel"><div className="section-label"><span>Na sua fila</span><button onClick={() => onNavigate("library")}>Ver todos</button></div>{books.filter((book) => book.status === "want").concat(books.filter((book) => book.status === "paused")).slice(0, 2).map((book, index) => <button key={book.id} onClick={() => onOpen(book)}><span>{index + 1}</span><Cover book={book} size="small" /><span><b>{book.title}</b><small>{book.author}</small></span></button>)}</section>
+          <section className="goal-card panel"><div className="section-label"><span>Meta anual</span><button>Editar</button></div><div className="goal-ring"><div><b>{read}</b><small>de 24 livros</small></div></div><p><span>{goalProgress}% concluída</span><b>{Math.max(0, 24 - read)} restantes</b></p><ProgressBar value={goalProgress} /><small>{read ? "Progresso calculado pelos livros concluídos." : "A meta começa no primeiro livro concluído."}</small></section>
+          {noteBook && <section className="note-card panel"><div className="section-label"><span>Nota em destaque</span></div><p>“{noteBook.note}”</p><div><span className="tiny-cover" style={{ background: noteBook.accent }} /><span><b>{noteBook.title}</b><small>Anotação pessoal</small></span></div></section>}
+          <section className="next-card panel"><div className="section-label"><span>Na sua fila</span><button onClick={() => onNavigate("library")}>Ver todos</button></div>{queue.map((book, index) => <button key={book.id} onClick={() => onOpen(book)}><span>{index + 1}</span><Cover book={book} size="small" /><span><b>{book.title}</b><small>{book.author}</small></span></button>)}</section>
         </aside>
       </div>
     </div>
@@ -896,7 +958,7 @@ function ReadingDialog({ book, onClose, onSave }: { book: Book; onClose: () => v
   const submit = () => {
     if (start < 1 || end < start || (book.pages > 0 && end > book.pages)) { setError(`Use um intervalo entre 1 e ${book.pages || "o fim do livro"}.`); return; }
     if (book.sessions.some((session) => start <= session.end && end >= session.start)) { setError("Este intervalo se sobrepõe a uma leitura já registrada."); return; }
-    const session = { date: new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(`${date}T12:00:00`)).replace(".", ""), start, end };
+    const session = { date: new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(new Date(`${date}T12:00:00`)).replace(".", ""), isoDate: date, start, end };
     const updated = { ...book, currentPage: Math.max(book.currentPage, end), status: end >= book.pages && book.pages > 0 ? "read" as Status : "reading" as Status, sessions: [...book.sessions, session] };
     if (!isNativeRuntime()) fetch(`/api/library/${book.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPage: updated.currentPage, status: updated.status, session: { startPage: start, endPage: end, readAt: date } }) }).catch(() => undefined);
     onSave(updated);
