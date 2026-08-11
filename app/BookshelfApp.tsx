@@ -368,14 +368,15 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-function Heatmap() {
+function Heatmap({ empty = false }: { empty?: boolean }) {
   const cells = useMemo(
     () =>
       Array.from({ length: 119 }, (_, index) => {
+        if (empty) return 0;
         const wave = (index * 7 + Math.floor(index / 11) * 3) % 17;
         return index > 99 ? (wave % 5 === 0 ? 0 : Math.min(4, Math.ceil(wave / 4))) : wave > 10 ? 0 : Math.min(4, Math.ceil(wave / 3));
       }),
-    [],
+    [empty],
   );
   return (
     <div className="heatmap-wrap">
@@ -391,7 +392,7 @@ function Heatmap() {
 }
 
 export function BookshelfApp() {
-  const [books, setBooks] = useState<Book[]>(seedBooks);
+  const [books, setBooks] = useState<Book[]>(() => isNativeRuntime() ? seedBooks : []);
   const [section, setSection] = useState("dashboard");
   const [theme, setTheme] = useState<Theme>("light");
   const [style, setStyle] = useState<VisualStyle>("minimal");
@@ -416,6 +417,16 @@ export function BookshelfApp() {
 
   useEffect(() => {
     const native = isNativeRuntime();
+    if (!native && localStorage.getItem("mybookshelf-first-access-v2") !== "ready") {
+      [
+        "mybookshelf-library-v1",
+        "mybookshelf-organizations-v1",
+        "mybookshelf-stats-initialized-v1",
+        "mybookshelf-tutorial-v1",
+        "mybookshelf-settings-v1",
+      ].forEach((key) => localStorage.removeItem(key));
+      localStorage.setItem("mybookshelf-first-access-v2", "ready");
+    }
     setOnline(navigator.onLine);
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
@@ -649,9 +660,9 @@ export function BookshelfApp() {
         </header>
 
         {selectedBook ? (
-          <BookDetail book={selectedBook} onBack={() => setSelectedBook(null)} onUpdate={updateBook} onRead={() => setShowReading(true)} />
+          <BookDetail book={selectedBook} relatedBooks={books.filter((item) => item.id !== selectedBook.id).slice(0, 3)} onBack={() => setSelectedBook(null)} onUpdate={updateBook} onRead={() => setShowReading(true)} />
         ) : section === "dashboard" ? (
-          <Dashboard books={books} readingBook={readingBook} onOpen={setSelectedBook} onRead={() => { setSelectedBook(readingBook); setShowReading(true); }} onNavigate={navigate} />
+          <Dashboard books={books} readingBook={readingBook} onOpen={setSelectedBook} onRead={() => { if (readingBook) { setSelectedBook(readingBook); setShowReading(true); } }} onAdd={() => setShowAdd(true)} onNavigate={navigate} />
         ) : ["library", "reading", "read", "favorites"].includes(section) ? (
           <Library books={visibleBooks} section={section} viewMode={viewMode} setViewMode={setViewMode} filter={filter} setFilter={setFilter} onOpen={setSelectedBook} onStatusChange={changeBookStatus} onDelete={deleteBook} />
         ) : section === "stats" ? (
@@ -681,8 +692,11 @@ export function BookshelfApp() {
   );
 }
 
-function Dashboard({ books, readingBook, onOpen, onRead, onNavigate }: { books: Book[]; readingBook: Book; onOpen: (book: Book) => void; onRead: () => void; onNavigate: (section: string) => void }) {
+function Dashboard({ books, readingBook, onOpen, onRead, onAdd, onNavigate }: { books: Book[]; readingBook?: Book; onOpen: (book: Book) => void; onRead: () => void; onAdd: () => void; onNavigate: (section: string) => void }) {
   const read = books.filter((book) => book.status === "read").length;
+  if (!readingBook) {
+    return <div className="page dashboard-page first-access-dashboard"><section className="page-heading dashboard-heading"><div><span className="eyebrow">{todayLabel()}</span><h1>Boa noite, leitor.</h1><p>Sua biblioteca está pronta para receber o primeiro livro.</p></div><div className="heading-quote"><i>“</i><p>Todo leitor começa por uma primeira página.<small>— MyBookshelf</small></p></div></section><div className="dashboard-grid"><section className="current-card panel first-access-card"><div className="empty-state"><span>＋</span><h2>Comece sua biblioteca</h2><p>Adicione seu primeiro livro para acompanhar leituras, páginas e anotações.</p><button className="primary-button" onClick={onAdd}>Adicionar primeiro livro</button></div></section><section className="quick-stats"><article className="metric panel"><span className="metric-icon">⌁</span><div><small>Páginas hoje</small><b>0</b><p>Nenhuma leitura registrada</p></div></article><article className="metric panel"><span className="metric-icon">⌁</span><div><small>Sequência atual</small><b>0 <em>dias</em></b><p>Recorde: 0 dias</p></div></article><article className="metric panel"><span className="metric-icon">◉</span><div><small>Livros em 2026</small><b>0</b><p>Comece quando quiser</p></div></article></section><section className="weekly panel"><div className="section-label"><div><span>Leitura esta semana</span><small>0 páginas · 0 min</small></div></div><div className="bar-chart" aria-label="Nenhuma página lida nesta semana">{[0, 0, 0, 0, 0, 0, 0].map((value, index) => <div key={index}><span style={{ height: "4%" }} /><small>{["seg", "ter", "qua", "qui", "sex", "sáb", "dom"][index]}</small></div>)}</div></section><section className="streak-card panel"><div className="section-label"><div><span>Sua constância</span><small>Nenhuma leitura registrada ainda</small></div><div className="streak-badge">◒ 0 dias</div></div><Heatmap empty /></section></div></div>;
+  }
   return (
     <div className="page dashboard-page">
       <section className="page-heading dashboard-heading">
@@ -747,7 +761,7 @@ function Library({ books, section, viewMode, setViewMode, filter, setFilter, onO
   return (
     <div className="page library-page">
       <section className="page-heading library-heading"><div><span className="eyebrow">Coleção pessoal</span><h1>{title}</h1><p>{books.length} {books.length === 1 ? "livro encontrado" : "livros encontrados"}</p></div><div className="view-switch" aria-label="Modo de visualização">{[["grid", "▦", "Grade"], ["carousel", "▱", "Carrossel"], ["list", "☷", "Lista"], ["table", "▤", "Tabela"]].map(([mode, icon, label]) => <button key={mode} className={viewMode === mode ? "active" : ""} onClick={() => setViewMode(mode as ViewMode)} title={label}>{icon}</button>)}</div></section>
-      <section className="library-tools"><div className="filter-chips"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>Todos</button>{(["reading", "read", "paused", "want"] as Status[]).map((status) => <button key={status} className={filter === status ? "active" : ""} onClick={() => setFilter(status)}>{statusLabels[status]}</button>)}</div><button className="sort-button">Ordenar: recentes ⌄</button></section>
+      <section className="library-tools"><div className="filter-chips"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>Todos</button>{(["reading", "read", "paused", "abandoned", "want"] as Status[]).map((status) => <button key={status} className={filter === status ? "active" : ""} onClick={() => setFilter(status)}>{statusLabels[status]}</button>)}</div><button className="sort-button">Ordenar: recentes ⌄</button></section>
       {books.length ? <div className={`book-collection view-${viewMode}`}>
         {books.map((book) => <article className="library-book" key={book.id} tabIndex={0} role="button" onClick={() => onOpen(book)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(book); }}>
           <button className="book-overflow" aria-label={`Ações para ${book.title}`} aria-expanded={actionBookId === book.id} onClick={(event) => { event.stopPropagation(); setActionBookId((current) => current === book.id ? null : book.id); }}>⋮</button>
@@ -767,7 +781,7 @@ function Library({ books, section, viewMode, setViewMode, filter, setFilter, onO
   );
 }
 
-function BookDetail({ book, onBack, onUpdate, onRead }: { book: Book; onBack: () => void; onUpdate: (book: Book) => void; onRead: () => void }) {
+function BookDetail({ book, relatedBooks, onBack, onUpdate, onRead }: { book: Book; relatedBooks: Book[]; onBack: () => void; onUpdate: (book: Book) => void; onRead: () => void }) {
   const [tab, setTab] = useState("overview");
   const [note, setNote] = useState(book.note ?? "");
   const saveNote = () => onUpdate({ ...book, note });
@@ -783,34 +797,31 @@ function BookDetail({ book, onBack, onUpdate, onRead }: { book: Book; onBack: ()
       {tab === "overview" && <div className="detail-grid"><section><h2>Sobre o livro</h2><p className="description">{book.description || "Descrição ainda não disponível. Os metadados poderão ser atualizados quando houver conexão."}</p><h2>Detalhes</h2><dl className="metadata"><div><dt>Editora</dt><dd>{book.publisher || "—"}</dd></div><div><dt>Publicação</dt><dd>{book.published || "—"}</dd></div><div><dt>Idioma</dt><dd>{book.language || "—"}</dd></div><div><dt>ISBN</dt><dd>{book.isbn || "—"}</dd></div><div><dt>Páginas</dt><dd>{book.pages || "—"}</dd></div><div><dt>Categorias</dt><dd>{book.categories.join(", ") || "—"}</dd></div></dl></section><aside className="detail-side panel"><h2>Ritmo de leitura</h2><div className="pace-number"><b>{book.sessions.reduce((total, item) => total + item.end - item.start + 1, 0)}</b><span>páginas registradas</span></div><p>Média por sessão <b>38 páginas</b></p><p>Previsão de término <b>17 de agosto</b></p></aside></div>}
       {tab === "history" && <section className="history-list detail-history"><h2>Histórico de leitura</h2>{book.sessions.length ? book.sessions.slice().reverse().map((session, index) => <article key={`${session.date}-${index}`}><span>{session.date}</span><i /><div><b>Páginas {session.start}–{session.end}</b><p>{session.end - session.start + 1} páginas lidas</p></div></article>) : <div className="empty-state"><h2>Nenhuma sessão registrada</h2><p>Registre sua primeira leitura para começar o histórico.</p></div>}</section>}
       {tab === "notes" && <section className="notes-editor"><div><h2>Anotações pessoais</h2><span>Salvamento automático neste dispositivo</span></div><textarea value={note} onChange={(event) => setNote(event.target.value)} onBlur={saveNote} placeholder="Registre uma ideia, reflexão ou comentário…" /><button className="quiet-button" onClick={saveNote}>✓ Salvo automaticamente</button></section>}
-      {tab === "related" && <section className="related-grid">{seedBooks.filter((item) => item.id !== book.id).slice(0, 3).map((item) => <article key={item.id}><Cover book={item} /><h2>{item.title}</h2><p>{item.author}</p></article>)}</section>}
+      {tab === "related" && (relatedBooks.length ? <section className="related-grid">{relatedBooks.map((item) => <article key={item.id}><Cover book={item} /><h2>{item.title}</h2><p>{item.author}</p></article>)}</section> : <section className="panel empty-state"><h2>Nenhum livro relacionado</h2><p>Adicione mais livros para ver sugestões nesta área.</p></section>)}
     </div>
   );
 }
 
 function Stats({ books }: { books: Book[] }) {
   const read = books.filter((book) => book.status === "read");
-  return <div className="page stats-page"><section className="page-heading"><div><span className="eyebrow">Visão geral</span><h1>Estatísticas</h1><p>Entenda seus hábitos sem transformar a leitura em obrigação.</p></div></section><div className="stats-kpis"><article className="panel"><small>Livros lidos</small><b>{read.length + 9}</b><span>↗ 18% este ano</span></article><article className="panel"><small>Páginas lidas</small><b>4.286</b><span>17,8 por dia</span></article><article className="panel"><small>Tempo estimado</small><b>82h</b><span>3h 10min por semana</span></article><article className="panel"><small>Avaliação média</small><b>4,3</b><span>de 5 estrelas</span></article></div><div className="stats-grid"><section className="panel"><div className="section-label"><span>Páginas por mês</span><button>2026⌄</button></div><div className="monthly-chart">{[31,46,58,42,70,54,83,61,0,0,0,0].map((value, index) => <div key={index}><span style={{ height: `${Math.max(3, value)}%` }} /><small>{"JFMAMJJASOND"[index]}</small></div>)}</div></section><section className="panel category-stats"><div className="section-label"><span>Categorias mais lidas</span></div>{[["Ficção científica", 34], ["História", 24], ["Fantasia", 18], ["Clássicos", 14], ["Outros", 10]].map(([label, value]) => <div key={label}><p><span>{label}</span><b>{value}%</b></p><ProgressBar value={Number(value)} /></div>)}</section></div><section className="panel author-table"><div className="section-label"><span>Autores mais lidos</span><button>Ver relatório completo →</button></div><div className="table-row table-head"><span>Autor</span><span>Livros</span><span>Páginas</span><span>Avaliação</span></div>{[["Ursula K. Le Guin", 3, 934, "4,8"], ["Frank Herbert", 2, 1212, "4,5"], ["J. R. R. Tolkien", 2, 734, "5,0"]].map((row) => <div className="table-row" key={String(row[0])}>{row.map((cell, index) => <span key={index}>{cell}</span>)}</div>)}</section></div>;
+  const pagesRead = books.reduce((total, book) => total + book.sessions.reduce((sum, session) => sum + Math.max(0, session.end - session.start + 1), 0), 0);
+  const rated = books.filter((book) => book.rating > 0);
+  const averageRating = rated.length ? (rated.reduce((total, book) => total + book.rating, 0) / rated.length).toFixed(1).replace(".", ",") : "0,0";
+  const estimatedHours = Math.round((pagesRead * 1.2) / 60);
+  return <div className="page stats-page"><section className="page-heading"><div><span className="eyebrow">Visão geral</span><h1>Estatísticas</h1><p>Entenda seus hábitos sem transformar a leitura em obrigação.</p></div></section><div className="stats-kpis"><article className="panel"><small>Livros lidos</small><b>{read.length}</b><span>{read.length ? "Registrados na biblioteca" : "Nenhum livro concluído"}</span></article><article className="panel"><small>Páginas lidas</small><b>{pagesRead.toLocaleString("pt-BR")}</b><span>{pagesRead ? "Em sessões registradas" : "Nenhuma página registrada"}</span></article><article className="panel"><small>Tempo estimado</small><b>{estimatedHours}h</b><span>{estimatedHours ? "Com base nas páginas lidas" : "Nenhum tempo registrado"}</span></article><article className="panel"><small>Avaliação média</small><b>{averageRating}</b><span>de 5 estrelas</span></article></div><div className="stats-grid"><section className="panel"><div className="section-label"><span>Páginas por mês</span><button>2026⌄</button></div><div className="monthly-chart">{Array.from({ length: 12 }, (_, index) => <div key={index}><span style={{ height: "3%" }} /><small>{"JFMAMJJASOND"[index]}</small></div>)}</div></section><section className="panel category-stats"><div className="section-label"><span>Categorias mais lidas</span></div><div className="empty-state"><h2>Nenhum dado ainda</h2><p>As categorias aparecerão após suas primeiras leituras.</p></div></section></div><section className="panel author-table"><div className="section-label"><span>Autores mais lidos</span></div><div className="empty-state"><h2>Nenhum autor registrado</h2><p>Seus autores mais lidos aparecerão aqui.</p></div></section></div>;
 }
 
 function History({ books }: { books: Book[] }) {
-  const events = [
-    ["Hoje, 21:14", "progress", "Leitura atualizada", `${books[0].title} · páginas 384–412`],
-    ["Hoje, 18:02", "note", "Anotação adicionada", `${books[0].title} · página 391`],
-    ["Ontem, 22:47", "progress", "Leitura atualizada", `${books[0].title} · páginas 347–383`],
-    ["08 ago, 19:31", "finish", "Livro concluído", books[1].title],
-    ["07 ago, 09:12", "add", "Livro adicionado", books[4].title],
-    ["04 ago, 20:44", "rating", "Avaliação modificada", `${books[2].title} · 5 estrelas`],
-  ];
-  return <div className="page history-page"><section className="page-heading"><div><span className="eyebrow">Registro permanente</span><h1>Histórico</h1><p>Todas as mudanças importantes da sua biblioteca, em ordem cronológica.</p></div></section><div className="history-layout"><section className="history-list panel">{events.map(([date, type, title, detail], index) => <article key={index}><span>{date}</span><i className={`event-${type}`} /><div><b>{title}</b><p>{detail}</p></div></article>)}</section><aside className="panel history-filter"><h2>Filtrar atividade</h2>{["Todos os eventos", "Leituras", "Livros", "Anotações", "Avaliações"].map((label, index) => <button className={index === 0 ? "active" : ""} key={label}>{label}<span>{[26, 12, 6, 5, 3][index]}</span></button>)}</aside></div></div>;
+  const events = books.slice(0, 12).map((book) => ["Recentemente", book.status === "read" ? "finish" : "add", book.status === "read" ? "Livro concluído" : "Livro adicionado", book.title]);
+  return <div className="page history-page"><section className="page-heading"><div><span className="eyebrow">Registro permanente</span><h1>Histórico</h1><p>Todas as mudanças importantes da sua biblioteca, em ordem cronológica.</p></div></section>{events.length ? <div className="history-layout"><section className="history-list panel">{events.map(([date, type, title, detail], index) => <article key={index}><span>{date}</span><i className={`event-${type}`} /><div><b>{title}</b><p>{detail}</p></div></article>)}</section><aside className="panel history-filter"><h2>Filtrar atividade</h2>{["Todos os eventos", "Leituras", "Livros", "Anotações", "Avaliações"].map((label, index) => <button className={index === 0 ? "active" : ""} key={label}>{label}<span>{index === 0 ? events.length : 0}</span></button>)}</aside></div> : <section className="panel empty-state"><span>↺</span><h2>Nenhuma atividade ainda</h2><p>Seu histórico começará quando você adicionar o primeiro livro.</p></section>}</div>;
 }
 
 function Organize({ section, books, items, onOpen, onCreate, onFilter }: { section: string; books: Book[]; items: OrganizationItem[]; onOpen: (book: Book) => void; onCreate: () => void; onFilter: (item: OrganizationItem) => void }) {
   const labels: Record<string, [string, string]> = { categories: ["Categorias", "Navegue por assuntos identificados automaticamente."], tags: ["Tags", "Crie relações livres entre livros, ideias e momentos."], collections: ["Coleções", "Agrupe livros em estantes que fazem sentido para você."] };
   const [title, subtitle] = labels[section] ?? labels.categories;
   const kind = section as OrganizationKind;
-  const defaultNames = kind === "categories" ? ["Ficção científica", "Clássicos", "História", "Fantasia", "Desenvolvimento pessoal"] : kind === "tags" ? ["política", "humanidade", "gênero", "aventura", "hábitos", "sociedade"] : ["Essenciais", "Para reler", "Viagens longas", "Recomendações de amigos"];
-  const defaults: OrganizationItem[] = defaultNames.map((name, index) => ({ id: `default-${kind}-${index}`, kind, name, bookIds: kind === "categories" ? books.filter((book) => book.categories.includes(name)).map((book) => book.id) : kind === "tags" ? books.filter((book) => book.tags.includes(name)).map((book) => book.id) : books.slice(index % 3, index % 3 + 3).map((book) => book.id) }));
+  const inferredNames = kind === "categories" ? [...new Set(books.flatMap((book) => book.categories))] : kind === "tags" ? [...new Set(books.flatMap((book) => book.tags))] : [];
+  const defaults: OrganizationItem[] = inferredNames.map((name, index) => ({ id: `inferred-${kind}-${index}`, kind, name, bookIds: books.filter((book) => kind === "categories" ? book.categories.includes(name) : book.tags.includes(name)).map((book) => book.id) }));
   const saved = items.filter((item) => item.kind === kind);
   const groups = [...saved, ...defaults.filter((item) => !saved.some((savedItem) => savedItem.name.toLocaleLowerCase("pt-BR") === item.name.toLocaleLowerCase("pt-BR")))];
   return <div className="page organize-page"><section className="page-heading"><div><span className="eyebrow">Organização flexível</span><h1>{title}</h1><p>{subtitle}</p></div><button className="primary-button" onClick={onCreate}>＋ Criar {section === "collections" ? "coleção" : section === "tags" ? "tag" : "categoria"}</button></section><div className="organize-grid">{groups.map((group) => { const groupBooks = group.bookIds.map((id) => books.find((book) => book.id === id)).filter((book): book is Book => Boolean(book)); return <article className="panel" key={group.id}><div className="collection-head"><span>{section === "tags" ? "#" : "◇"}</span><button className="collection-filter" onClick={() => onFilter(group)}><h2>{group.name}</h2><p>{groupBooks.length} {groupBooks.length === 1 ? "livro" : "livros"}</p></button><button onClick={() => onFilter(group)} aria-label={`Filtrar por ${group.name}`}>→</button></div><div className="cover-stack">{groupBooks.slice(0, 3).map((book) => <button key={book.id} onClick={() => onOpen(book)}><Cover book={book} size="small" /></button>)}</div></article>; })}</div></div>;

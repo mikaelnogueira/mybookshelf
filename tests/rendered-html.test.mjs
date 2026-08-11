@@ -22,11 +22,27 @@ test("o build contém a experiência MyBookshelf", async () => {
   assert.match(client, /mybookshelf-tutorial-v1/);
   assert.match(client, /mybookshelf-stats-initialized-v1/);
   assert.match(client, /mybookshelf-organizations-v1/);
+  assert.match(client, /mybookshelf-first-access-v2/);
+  assert.match(client, /Adicionar primeiro livro/);
   assert.match(client, /Organização flexível/);
   assert.match(server, /Não foi possível excluir o livro agora/);
   assert.match(server, /Não foi possível salvar este item agora/);
   assert.match(server, /As estatísticas serão inicializadas quando a conexão retornar/);
   assert.doesNotMatch(`${server}${client}`, /codex-preview|Building your site|react-loading-skeleton/i);
+});
+
+test("a Web inicia vazia e mantém a capa Glass sem padding", async () => {
+  const [app, css, resetMigration] = await Promise.all([
+    readFile(new URL("../app/BookshelfApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0002_first_access_reset.sql", import.meta.url), "utf8"),
+  ]);
+  assert.match(app, /isNativeRuntime\(\) \? seedBooks : \[\]/);
+  assert.match(app, /\["reading", "read", "paused", "abandoned", "want"\]/);
+  assert.match(css, /view-carousel \.library-book \{ padding: 0;/);
+  assert.match(css, /view-carousel \.library-book-copy \{ padding: 10px;/);
+  assert.match(resetMigration, /DELETE FROM `books`/);
+  assert.match(resetMigration, /DELETE FROM `user_stats`/);
 });
 
 test("removeu todos os artefatos temporários do starter", async () => {
