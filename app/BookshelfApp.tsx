@@ -209,7 +209,17 @@ const statusLabels: Record<Status, string> = {
   want: "Quero ler",
 };
 
-const accentOptions = ["#c7f36b", "#7fd6ca", "#f3a868", "#b7a0ff", "#ed7c9c"];
+const accentOptions = ["#b7a0ff", "#c7f36b", "#7fd6ca", "#f3a868", "#ed7c9c"];
+
+const tutorialSteps = [
+  { icon: "▥", title: "Bem-vindo ao MyBookshelf", copy: "Sua biblioteca, progresso, ideias e hábitos de leitura reunidos em uma experiência simples." },
+  { icon: "▦", title: "Organize sua biblioteca", copy: "Adicione livros, use categorias, tags e coleções e encontre qualquer título com rapidez." },
+  { icon: "◔", title: "Acompanhe seu progresso", copy: "Registre páginas lidas e veja o avanço de cada leitura sem perder o histórico." },
+  { icon: "↗", title: "Mantenha sua ofensiva", copy: "A sequência de leitura ajuda a criar constância sem transformar a leitura em obrigação." },
+  { icon: "☷", title: "Encontre a melhor visualização", copy: "Filtre por status e alterne entre grade, carrossel, lista e tabela conforme o momento." },
+  { icon: "✎", title: "Guarde suas anotações", copy: "Registre reflexões e observações diretamente na página de cada livro." },
+  { icon: "◈", title: "Deixe o app com a sua cara", copy: "O padrão inicial é Claro com destaque Roxo. Temas, estilos e cores podem ser alterados em Aparência." },
+];
 
 function progress(book: Book) {
   return book.pages ? Math.min(100, Math.round((book.currentPage / book.pages) * 100)) : 0;
@@ -366,7 +376,7 @@ function Heatmap() {
 export function BookshelfApp() {
   const [books, setBooks] = useState<Book[]>(seedBooks);
   const [section, setSection] = useState("dashboard");
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>("light");
   const [style, setStyle] = useState<VisualStyle>("minimal");
   const [accent, setAccent] = useState(accentOptions[0]);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
@@ -378,6 +388,9 @@ export function BookshelfApp() {
   const [showReading, setShowReading] = useState(false);
   const [toast, setToast] = useState("");
   const [online, setOnline] = useState(true);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState<number | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const hydrated = useRef(false);
 
   useEffect(() => {
@@ -400,6 +413,8 @@ export function BookshelfApp() {
         if (parsed.accent) setAccent(parsed.accent);
       } catch { /* keep defaults */ }
     }
+    setSettingsReady(true);
+    if (!native && localStorage.getItem("mybookshelf-tutorial-v1") !== "completed") setTutorialStep(0);
     if (native) {
       mobileStoreGet<Book[]>("library", "books")
         .then((stored) => { if (stored?.length) setBooks(stored); })
@@ -440,8 +455,41 @@ export function BookshelfApp() {
   }, [books]);
 
   useEffect(() => {
+    if (!settingsReady) return;
     localStorage.setItem("mybookshelf-settings-v1", JSON.stringify({ theme, style, accent }));
-  }, [theme, style, accent]);
+  }, [theme, style, accent, settingsReady]);
+
+  useEffect(() => {
+    if (isNativeRuntime()) return;
+    let tracking = false;
+    let startX = 0;
+    let startY = 0;
+    const start = (event: TouchEvent) => {
+      if (window.innerWidth > 860) return;
+      const touch = event.touches[0];
+      if (!mobileMenuOpen && touch.clientX > 28) return;
+      tracking = true;
+      startX = touch.clientX;
+      startY = touch.clientY;
+    };
+    const end = (event: TouchEvent) => {
+      if (!tracking) return;
+      const touch = event.changedTouches[0];
+      const deltaX = touch.clientX - startX;
+      const deltaY = touch.clientY - startY;
+      if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 56) {
+        if (!mobileMenuOpen && deltaX > 0) setMobileMenuOpen(true);
+        if (mobileMenuOpen && deltaX < 0) setMobileMenuOpen(false);
+      }
+      tracking = false;
+    };
+    window.addEventListener("touchstart", start, { passive: true });
+    window.addEventListener("touchend", end, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", start);
+      window.removeEventListener("touchend", end);
+    };
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     if (!toast) return;
@@ -469,6 +517,7 @@ export function BookshelfApp() {
     setSelectedBook(null);
     setQuery("");
     if (["reading", "read", "favorites"].includes(next)) setFilter("all");
+    setMobileMenuOpen(false);
   };
 
   const updateBook = (updated: Book) => {
@@ -476,11 +525,31 @@ export function BookshelfApp() {
     setSelectedBook(updated);
   };
 
+  const changeBookStatus = (book: Book, status: Status) => {
+    const updated = { ...book, status, currentPage: status === "read" && book.pages ? book.pages : book.currentPage };
+    setBooks((current) => current.map((item) => item.id === book.id ? updated : item));
+    setSelectedBook((current) => current?.id === book.id ? updated : current);
+    fetch(`/api/library/${book.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, currentPage: updated.currentPage }) }).catch(() => undefined);
+    setToast(`${book.title} agora está como ${statusLabels[status].toLowerCase()}.`);
+  };
+
+  const deleteBook = (book: Book) => {
+    setBooks((current) => current.filter((item) => item.id !== book.id));
+    setSelectedBook((current) => current?.id === book.id ? null : current);
+    fetch(`/api/library/${book.id}`, { method: "DELETE" }).catch(() => undefined);
+    setToast(`${book.title} foi removido da biblioteca.`);
+  };
+
+  const finishTutorial = () => {
+    localStorage.setItem("mybookshelf-tutorial-v1", "completed");
+    setTutorialStep(null);
+  };
+
   const appStyle = { "--accent": accent } as React.CSSProperties;
 
   return (
     <main className="app-shell" data-theme={theme} data-style={style} data-native={isNativeRuntime() ? "true" : undefined} style={appStyle}>
-      <aside className="sidebar">
+      <aside className={`sidebar ${mobileMenuOpen ? "mobile-drawer-open" : ""}`} aria-label="Menu lateral">
         <button className="brand" onClick={() => navigate("dashboard")} aria-label="Ir para o início">
           <span className="brand-mark"><i /><i /><i /></span>
           <span>MyBookshelf<small>Sua biblioteca viva</small></span>
@@ -503,9 +572,11 @@ export function BookshelfApp() {
           <button className="profile" onClick={() => setShowPrefs(true)}><span>NG</span><span>Minha biblioteca<small>Preferências</small></span><b>···</b></button>
         </div>
       </aside>
+      <button className={`drawer-backdrop ${mobileMenuOpen ? "visible" : ""}`} onClick={() => setMobileMenuOpen(false)} aria-label="Fechar menu lateral" />
 
       <div className="app-main">
         <header className="topbar">
+          <button className="mobile-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Abrir menu lateral">☰</button>
           <button className="mobile-brand" onClick={() => navigate("dashboard")} aria-label="Início"><span className="brand-mark"><i /><i /><i /></span></button>
           <label className="global-search">
             <span>⌕</span>
@@ -524,7 +595,7 @@ export function BookshelfApp() {
         ) : section === "dashboard" ? (
           <Dashboard books={books} readingBook={readingBook} onOpen={setSelectedBook} onRead={() => { setSelectedBook(readingBook); setShowReading(true); }} onNavigate={navigate} />
         ) : ["library", "reading", "read", "favorites"].includes(section) ? (
-          <Library books={visibleBooks} section={section} viewMode={viewMode} setViewMode={setViewMode} filter={filter} setFilter={setFilter} onOpen={setSelectedBook} />
+          <Library books={visibleBooks} section={section} viewMode={viewMode} setViewMode={setViewMode} filter={filter} setFilter={setFilter} onOpen={setSelectedBook} onStatusChange={changeBookStatus} onDelete={deleteBook} />
         ) : section === "stats" ? (
           <Stats books={books} />
         ) : section === "history" ? (
@@ -543,8 +614,9 @@ export function BookshelfApp() {
       </nav>
 
       {showAdd && <AddBookDialog books={books} onClose={() => setShowAdd(false)} onAdd={(book) => { setBooks((current) => [book, ...current]); setShowAdd(false); setToast(`${book.title} foi adicionado à sua estante.`); }} />}
-      {showPrefs && <Preferences theme={theme} setTheme={setTheme} style={style} setStyle={setStyle} accent={accent} setAccent={setAccent} onClose={() => setShowPrefs(false)} />}
+      {showPrefs && <Preferences theme={theme} setTheme={setTheme} style={style} setStyle={setStyle} accent={accent} setAccent={setAccent} onTutorial={() => { setShowPrefs(false); setTutorialStep(0); }} onClose={() => setShowPrefs(false)} />}
       {showReading && selectedBook && <ReadingDialog book={selectedBook} onClose={() => setShowReading(false)} onSave={(book) => { updateBook(book); setShowReading(false); setToast("Progresso salvo automaticamente."); }} />}
+      {tutorialStep !== null && !isNativeRuntime() && <Tutorial step={tutorialStep} onStep={setTutorialStep} onSkip={finishTutorial} onFinish={finishTutorial} />}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </main>
   );
@@ -610,18 +682,27 @@ function Dashboard({ books, readingBook, onOpen, onRead, onNavigate }: { books: 
   );
 }
 
-function Library({ books, section, viewMode, setViewMode, filter, setFilter, onOpen }: { books: Book[]; section: string; viewMode: ViewMode; setViewMode: (mode: ViewMode) => void; filter: Status | "all"; setFilter: (filter: Status | "all") => void; onOpen: (book: Book) => void }) {
+function Library({ books, section, viewMode, setViewMode, filter, setFilter, onOpen, onStatusChange, onDelete }: { books: Book[]; section: string; viewMode: ViewMode; setViewMode: (mode: ViewMode) => void; filter: Status | "all"; setFilter: (filter: Status | "all") => void; onOpen: (book: Book) => void; onStatusChange: (book: Book, status: Status) => void; onDelete: (book: Book) => void }) {
+  const [actionBookId, setActionBookId] = useState<string | null>(null);
   const title = section === "reading" ? "Lendo agora" : section === "read" ? "Livros lidos" : section === "favorites" ? "Favoritos" : "Sua biblioteca";
   return (
     <div className="page library-page">
       <section className="page-heading library-heading"><div><span className="eyebrow">Coleção pessoal</span><h1>{title}</h1><p>{books.length} {books.length === 1 ? "livro encontrado" : "livros encontrados"}</p></div><div className="view-switch" aria-label="Modo de visualização">{[["grid", "▦", "Grade"], ["carousel", "▱", "Carrossel"], ["list", "☷", "Lista"], ["table", "▤", "Tabela"]].map(([mode, icon, label]) => <button key={mode} className={viewMode === mode ? "active" : ""} onClick={() => setViewMode(mode as ViewMode)} title={label}>{icon}</button>)}</div></section>
       <section className="library-tools"><div className="filter-chips"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>Todos</button>{(["reading", "read", "paused", "want"] as Status[]).map((status) => <button key={status} className={filter === status ? "active" : ""} onClick={() => setFilter(status)}>{statusLabels[status]}</button>)}</div><button className="sort-button">Ordenar: recentes ⌄</button></section>
       {books.length ? <div className={`book-collection view-${viewMode}`}>
-        {books.map((book) => <button className="library-book" key={book.id} onClick={() => onOpen(book)}>
+        {books.map((book) => <article className="library-book" key={book.id} tabIndex={0} role="button" onClick={() => onOpen(book)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(book); }}>
+          <button className="book-overflow" aria-label={`Ações para ${book.title}`} aria-expanded={actionBookId === book.id} onClick={(event) => { event.stopPropagation(); setActionBookId((current) => current === book.id ? null : book.id); }}>⋮</button>
+          {actionBookId === book.id && <div className="book-action-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+            <span>Alterar status</span>
+            <button role="menuitem" onClick={() => { onStatusChange(book, "reading"); setActionBookId(null); }}><i>◐</i>Lendo</button>
+            <button role="menuitem" onClick={() => { onStatusChange(book, "read"); setActionBookId(null); }}><i>✓</i>Lido</button>
+            <button role="menuitem" onClick={() => { onStatusChange(book, "abandoned"); setActionBookId(null); }}><i>×</i>Abandonado</button>
+            <button className="danger" role="menuitem" onClick={() => { if (window.confirm(`Excluir “${book.title}” da biblioteca?`)) onDelete(book); setActionBookId(null); }}><i>⌫</i>Excluir livro</button>
+          </div>}
           <Cover book={book} size={viewMode === "table" ? "small" : "medium"} />
           <div className="library-book-copy"><span className={`book-status status-${book.status}`}>{statusLabels[book.status]}</span><h2>{book.title}</h2><p>{book.author}</p>{book.status === "reading" || book.status === "paused" ? <><ProgressBar value={progress(book)} /><small>{progress(book)}% · {book.currentPage}/{book.pages} páginas</small></> : <small>{book.published} · {book.pages || "—"} páginas</small>}<div className="book-tags">{book.categories.slice(0, 2).map((category) => <i key={category}>{category}</i>)}</div></div>
           <div className="table-meta"><span>{book.publisher || "—"}</span><span>{book.language || "—"}</span><span>{book.rating ? `${"★".repeat(book.rating)}${"☆".repeat(5 - book.rating)}` : "Sem avaliação"}</span></div>
-        </button>)}
+        </article>)}
       </div> : <div className="empty-state"><span>⌕</span><h2>Nenhum livro por aqui</h2><p>Experimente remover um filtro ou buscar outro termo.</p></div>}
     </div>
   );
@@ -723,6 +804,12 @@ function ReadingDialog({ book, onClose, onSave }: { book: Book; onClose: () => v
   return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog reading-dialog" role="dialog" aria-modal="true"><div className="dialog-head"><div><span className="eyebrow">Sessão de leitura</span><h2>Registrar progresso</h2><p>{book.title}</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="reading-book-row"><Cover book={book} size="small" /><div><b>{progress(book)}% concluído</b><ProgressBar value={progress(book)} /><span>Você parou na página {book.currentPage}</span></div></div><div className="page-range"><label><span>Página inicial</span><input type="number" min="1" max={book.pages} value={start} onChange={(event) => setStart(Number(event.target.value))} /></label><i>→</i><label><span>Página final</span><input type="number" min="1" max={book.pages} value={end} onChange={(event) => setEnd(Number(event.target.value))} /></label></div><label className="date-field"><span>Data da leitura</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label><div className="session-summary"><span>Páginas nesta sessão</span><b>{Math.max(0, end - start + 1)}</b></div>{error && <p className="form-error">{error}</p>}<button className="primary-button dialog-submit" onClick={submit}>Registrar leitura</button><footer>Salvo automaticamente e disponível offline.</footer></section></div>;
 }
 
-function Preferences({ theme, setTheme, style, setStyle, accent, setAccent, onClose }: { theme: Theme; setTheme: (theme: Theme) => void; style: VisualStyle; setStyle: (style: VisualStyle) => void; accent: string; setAccent: (accent: string) => void; onClose: () => void }) {
-  return <div className="dialog-backdrop preference-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="preferences" role="dialog" aria-modal="true" aria-labelledby="prefs-title"><div className="dialog-head"><div><span className="eyebrow">Aparência</span><h2 id="prefs-title">Sua interface</h2><p>As mudanças são aplicadas imediatamente.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="preference-group"><h3>Tema</h3><div className="segmented"><button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>☼ Claro</button><button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>◐ Escuro</button></div></div><div className="preference-group"><h3>Estilo visual</h3><div className="style-options"><button className={style === "minimal" ? "active" : ""} onClick={() => setStyle("minimal")}><span className="style-preview minimal-preview"><i /><i /><i /></span><b>Minimalista</b><small>Conteúdo e espaço</small></button><button className={style === "brutal" ? "active" : ""} onClick={() => setStyle("brutal")}><span className="style-preview brutal-preview"><i /><i /><i /></span><b>Neobrutalismo</b><small>Traços e contraste</small></button><button className={style === "glass" ? "active" : ""} onClick={() => setStyle("glass")}><span className="style-preview glass-preview"><i /><i /><i /></span><b>Glass</b><small>Vidro e profundidade</small></button></div></div><div className="preference-group"><h3>Cor principal</h3><div className="accent-options">{accentOptions.map((color) => <button key={color} className={accent === color ? "active" : ""} style={{ background: color }} onClick={() => setAccent(color)} aria-label={`Usar cor ${color}`}>{accent === color ? "✓" : ""}</button>)}</div></div><div className="preference-note"><span>AA</span><p><b>Legibilidade preservada</b>Contraste e hierarquia permanecem consistentes em todas as combinações.</p></div></section></div>;
+function Tutorial({ step, onStep, onSkip, onFinish }: { step: number; onStep: (step: number) => void; onSkip: () => void; onFinish: () => void }) {
+  const item = tutorialSteps[step];
+  const last = step === tutorialSteps.length - 1;
+  return <div className="tutorial-backdrop"><section className="tutorial" role="dialog" aria-modal="true" aria-labelledby="tutorial-title"><header><span>Guia rápido</span><button onClick={onSkip}>Pular tutorial</button></header><div className="tutorial-visual" aria-hidden="true"><i>{item.icon}</i><span>{String(step + 1).padStart(2, "0")}</span></div><div className="tutorial-copy"><small>Etapa {step + 1} de {tutorialSteps.length}</small><h2 id="tutorial-title">{item.title}</h2><p>{item.copy}</p></div><div className="tutorial-progress" aria-label={`Etapa ${step + 1} de ${tutorialSteps.length}`}>{tutorialSteps.map((_, index) => <i key={index} className={index <= step ? "active" : ""} />)}</div><footer><button className="quiet-button" onClick={() => onStep(step - 1)} disabled={step === 0}>← Voltar</button><button className="primary-button" onClick={() => last ? onFinish() : onStep(step + 1)}>{last ? "Concluir" : "Avançar →"}</button></footer></section></div>;
+}
+
+function Preferences({ theme, setTheme, style, setStyle, accent, setAccent, onTutorial, onClose }: { theme: Theme; setTheme: (theme: Theme) => void; style: VisualStyle; setStyle: (style: VisualStyle) => void; accent: string; setAccent: (accent: string) => void; onTutorial: () => void; onClose: () => void }) {
+  return <div className="dialog-backdrop preference-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="preferences" role="dialog" aria-modal="true" aria-labelledby="prefs-title"><div className="dialog-head"><div><span className="eyebrow">Aparência</span><h2 id="prefs-title">Sua interface</h2><p>As mudanças são aplicadas imediatamente.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="preference-group"><h3>Tema</h3><div className="segmented"><button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>☼ Claro</button><button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>◐ Escuro</button></div></div><div className="preference-group"><h3>Estilo visual</h3><div className="style-options"><button className={style === "minimal" ? "active" : ""} onClick={() => setStyle("minimal")}><span className="style-preview minimal-preview"><i /><i /><i /></span><b>Minimalista</b><small>Conteúdo e espaço</small></button><button className={style === "brutal" ? "active" : ""} onClick={() => setStyle("brutal")}><span className="style-preview brutal-preview"><i /><i /><i /></span><b>Neobrutalismo</b><small>Traços e contraste</small></button><button className={style === "glass" ? "active" : ""} onClick={() => setStyle("glass")}><span className="style-preview glass-preview"><i /><i /><i /></span><b>Glass</b><small>Vidro e profundidade</small></button></div></div><div className="preference-group"><h3>Cor principal</h3><div className="accent-options">{accentOptions.map((color) => <button key={color} className={accent === color ? "active" : ""} style={{ background: color }} onClick={() => setAccent(color)} aria-label={`Usar cor ${color}`}>{accent === color ? "✓" : ""}</button>)}</div></div><button className="tutorial-reopen" onClick={onTutorial}><span>?</span><span><b>Rever tutorial</b><small>Conheça novamente os principais recursos.</small></span><i>→</i></button><div className="preference-note"><span>AA</span><p><b>Legibilidade preservada</b>Contraste e hierarquia permanecem consistentes em todas as combinações.</p></div></section></div>;
 }

@@ -68,3 +68,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return Response.json({ error: "A atualização será sincronizada quando houver conexão." }, { status: 503 });
   }
 }
+
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  try {
+    const db = getDb();
+    const [existing] = await db.select({ id: books.id }).from(books).where(eq(books.id, id)).limit(1);
+    if (!existing) return Response.json({ error: "Livro não encontrado." }, { status: 404 });
+    await db.delete(books).where(eq(books.id, id));
+    return new Response(null, { status: 204 });
+  } catch {
+    return Response.json({ error: "Não foi possível excluir o livro agora." }, { status: 503 });
+  }
+}
