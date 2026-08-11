@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const books = sqliteTable(
   "books",
@@ -65,4 +65,30 @@ export const activity = sqliteTable(
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("idx_activity_created").on(table.createdAt)],
+);
+
+export const userStats = sqliteTable("user_stats", {
+  id: text("id").primaryKey(),
+  currentStreak: integer("current_streak").notNull().default(0),
+  bestStreak: integer("best_streak").notNull().default(0),
+  booksRead: integer("books_read").notNull().default(0),
+  pagesRead: integer("pages_read").notNull().default(0),
+  initializedAt: text("initialized_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const organizationItems = sqliteTable(
+  "organization_items",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", { enum: ["categories", "tags", "collections"] }).notNull(),
+    name: text("name").notNull(),
+    bookIdsJson: text("book_ids_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_organization_kind_updated").on(table.kind, table.updatedAt),
+    uniqueIndex("idx_organization_kind_name").on(table.kind, table.name),
+  ],
 );

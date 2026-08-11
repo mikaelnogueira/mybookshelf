@@ -20,7 +20,12 @@ test("o build contém a experiência MyBookshelf", async () => {
   assert.match(client, /Rever tutorial/);
   assert.match(client, /Excluir livro/);
   assert.match(client, /mybookshelf-tutorial-v1/);
+  assert.match(client, /mybookshelf-stats-initialized-v1/);
+  assert.match(client, /mybookshelf-organizations-v1/);
+  assert.match(client, /Organização flexível/);
   assert.match(server, /Não foi possível excluir o livro agora/);
+  assert.match(server, /Não foi possível salvar este item agora/);
+  assert.match(server, /As estatísticas serão inicializadas quando a conexão retornar/);
   assert.doesNotMatch(`${server}${client}`, /codex-preview|Building your site|react-loading-skeleton/i);
 });
 

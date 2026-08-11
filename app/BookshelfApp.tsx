@@ -6,6 +6,7 @@ type Status = "reading" | "read" | "paused" | "abandoned" | "want";
 type ViewMode = "grid" | "carousel" | "list" | "table";
 type VisualStyle = "minimal" | "brutal" | "glass";
 type Theme = "dark" | "light";
+type OrganizationKind = "categories" | "tags" | "collections";
 
 type Session = { date: string; start: number; end: number };
 type Book = {
@@ -41,6 +42,14 @@ type SearchResult = {
   language: string;
   isbn: string;
   categories: string[];
+};
+
+type OrganizationItem = {
+  id: string;
+  kind: OrganizationKind;
+  name: string;
+  bookIds: string[];
+  createdAt?: string;
 };
 
 const seedBooks: Book[] = [
@@ -233,6 +242,14 @@ function todayLabel() {
   }).format(new Date());
 }
 
+async function initializeWebStats() {
+  if (isNativeRuntime() || localStorage.getItem("mybookshelf-stats-initialized-v1") === "true") return;
+  try {
+    const response = await fetch("/api/stats", { method: "POST" });
+    if (response.ok) localStorage.setItem("mybookshelf-stats-initialized-v1", "true");
+  } catch { /* initialization remains safely retryable */ }
+}
+
 type NativeWindow = Window & {
   Capacitor?: { isNativePlatform?: () => boolean };
 };
@@ -391,7 +408,11 @@ export function BookshelfApp() {
   const [settingsReady, setSettingsReady] = useState(false);
   const [tutorialStep, setTutorialStep] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
+  const [organizationFilter, setOrganizationFilter] = useState<{ label: string; bookIds: string[] } | null>(null);
+  const [organizationDialog, setOrganizationDialog] = useState<OrganizationKind | null>(null);
   const hydrated = useRef(false);
+  const organizationsHydrated = useRef(false);
 
   useEffect(() => {
     const native = isNativeRuntime();
@@ -414,7 +435,20 @@ export function BookshelfApp() {
       } catch { /* keep defaults */ }
     }
     setSettingsReady(true);
-    if (!native && localStorage.getItem("mybookshelf-tutorial-v1") !== "completed") setTutorialStep(0);
+    const tutorialCompleted = localStorage.getItem("mybookshelf-tutorial-v1") === "completed";
+    if (!native && !tutorialCompleted) setTutorialStep(0);
+    if (!native && tutorialCompleted) initializeWebStats();
+    if (!native) {
+      const cachedOrganizations = localStorage.getItem("mybookshelf-organizations-v1");
+      if (cachedOrganizations) {
+        try { setOrganizations(JSON.parse(cachedOrganizations) as OrganizationItem[]); } catch { /* use server state */ }
+      }
+      fetch("/api/organization")
+        .then((response) => response.json())
+        .then((data: { items?: OrganizationItem[] }) => { if (data.items?.length) setOrganizations(data.items); })
+        .catch(() => undefined)
+        .finally(() => { organizationsHydrated.current = true; });
+    }
     if (native) {
       mobileStoreGet<Book[]>("library", "books")
         .then((stored) => { if (stored?.length) setBooks(stored); })
@@ -460,6 +494,11 @@ export function BookshelfApp() {
   }, [theme, style, accent, settingsReady]);
 
   useEffect(() => {
+    if (!organizationsHydrated.current || isNativeRuntime()) return;
+    localStorage.setItem("mybookshelf-organizations-v1", JSON.stringify(organizations));
+  }, [organizations]);
+
+  useEffect(() => {
     if (isNativeRuntime()) return;
     let tracking = false;
     let startX = 0;
@@ -502,13 +541,17 @@ export function BookshelfApp() {
     if (section === "reading") result = result.filter((book) => book.status === "reading");
     if (section === "read") result = result.filter((book) => book.status === "read");
     if (section === "favorites") result = result.filter((book) => book.favorite);
+    if (organizationFilter) {
+      const allowed = new Set(organizationFilter.bookIds);
+      result = result.filter((book) => allowed.has(book.id));
+    }
     if (filter !== "all") result = result.filter((book) => book.status === filter);
     if (query.trim()) {
       const normalized = query.toLocaleLowerCase("pt-BR");
-      result = result.filter((book) => `${book.title} ${book.author} ${book.tags.join(" ")}`.toLocaleLowerCase("pt-BR").includes(normalized));
+      result = result.filter((book) => `${book.title} ${book.author} ${book.tags.join(" ")} ${book.categories.join(" ")}`.toLocaleLowerCase("pt-BR").includes(normalized));
     }
     return result;
-  }, [books, filter, query, section]);
+  }, [books, filter, organizationFilter, query, section]);
 
   const readingBook = books.find((book) => book.status === "reading") ?? books[0];
 
@@ -516,6 +559,7 @@ export function BookshelfApp() {
     setSection(next);
     setSelectedBook(null);
     setQuery("");
+    setOrganizationFilter(null);
     if (["reading", "read", "favorites"].includes(next)) setFilter("all");
     setMobileMenuOpen(false);
   };
@@ -542,7 +586,21 @@ export function BookshelfApp() {
 
   const finishTutorial = () => {
     localStorage.setItem("mybookshelf-tutorial-v1", "completed");
+    initializeWebStats();
     setTutorialStep(null);
+  };
+
+  const createOrganization = (item: OrganizationItem) => {
+    setOrganizations((current) => [item, ...current.filter((existing) => existing.id !== item.id)]);
+    fetch("/api/organization", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).catch(() => undefined);
+    setOrganizationDialog(null);
+    setToast(`${item.name} foi criado e salvo.`);
+  };
+
+  const useOrganizationFilter = (item: OrganizationItem) => {
+    navigate("library");
+    setOrganizationFilter({ label: item.name, bookIds: item.bookIds });
+    setToast(`Mostrando livros de ${item.name}.`);
   };
 
   const appStyle = { "--accent": accent } as React.CSSProperties;
@@ -603,7 +661,7 @@ export function BookshelfApp() {
         ) : section === "integrations" ? (
           <Integrations />
         ) : (
-          <Organize section={section} books={books} onOpen={setSelectedBook} />
+          <Organize section={section} books={books} items={organizations} onOpen={setSelectedBook} onCreate={() => setOrganizationDialog(section as OrganizationKind)} onFilter={useOrganizationFilter} />
         )}
       </div>
 
@@ -616,6 +674,7 @@ export function BookshelfApp() {
       {showAdd && <AddBookDialog books={books} onClose={() => setShowAdd(false)} onAdd={(book) => { setBooks((current) => [book, ...current]); setShowAdd(false); setToast(`${book.title} foi adicionado à sua estante.`); }} />}
       {showPrefs && <Preferences theme={theme} setTheme={setTheme} style={style} setStyle={setStyle} accent={accent} setAccent={setAccent} onTutorial={() => { setShowPrefs(false); setTutorialStep(0); }} onClose={() => setShowPrefs(false)} />}
       {showReading && selectedBook && <ReadingDialog book={selectedBook} onClose={() => setShowReading(false)} onSave={(book) => { updateBook(book); setShowReading(false); setToast("Progresso salvo automaticamente."); }} />}
+      {organizationDialog && <OrganizationDialog kind={organizationDialog} books={books} existing={organizations} onClose={() => setOrganizationDialog(null)} onSave={createOrganization} />}
       {tutorialStep !== null && !isNativeRuntime() && <Tutorial step={tutorialStep} onStep={setTutorialStep} onSkip={finishTutorial} onFinish={finishTutorial} />}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </main>
@@ -746,11 +805,15 @@ function History({ books }: { books: Book[] }) {
   return <div className="page history-page"><section className="page-heading"><div><span className="eyebrow">Registro permanente</span><h1>Histórico</h1><p>Todas as mudanças importantes da sua biblioteca, em ordem cronológica.</p></div></section><div className="history-layout"><section className="history-list panel">{events.map(([date, type, title, detail], index) => <article key={index}><span>{date}</span><i className={`event-${type}`} /><div><b>{title}</b><p>{detail}</p></div></article>)}</section><aside className="panel history-filter"><h2>Filtrar atividade</h2>{["Todos os eventos", "Leituras", "Livros", "Anotações", "Avaliações"].map((label, index) => <button className={index === 0 ? "active" : ""} key={label}>{label}<span>{[26, 12, 6, 5, 3][index]}</span></button>)}</aside></div></div>;
 }
 
-function Organize({ section, books, onOpen }: { section: string; books: Book[]; onOpen: (book: Book) => void }) {
+function Organize({ section, books, items, onOpen, onCreate, onFilter }: { section: string; books: Book[]; items: OrganizationItem[]; onOpen: (book: Book) => void; onCreate: () => void; onFilter: (item: OrganizationItem) => void }) {
   const labels: Record<string, [string, string]> = { categories: ["Categorias", "Navegue por assuntos identificados automaticamente."], tags: ["Tags", "Crie relações livres entre livros, ideias e momentos."], collections: ["Coleções", "Agrupe livros em estantes que fazem sentido para você."] };
   const [title, subtitle] = labels[section] ?? labels.categories;
-  const groups = section === "categories" ? ["Ficção científica", "Clássicos", "História", "Fantasia", "Desenvolvimento pessoal"] : section === "tags" ? ["política", "humanidade", "gênero", "aventura", "hábitos", "sociedade"] : ["Essenciais", "Para reler", "Viagens longas", "Recomendações de amigos"];
-  return <div className="page organize-page"><section className="page-heading"><div><span className="eyebrow">Organização flexível</span><h1>{title}</h1><p>{subtitle}</p></div><button className="primary-button">＋ Criar {section === "collections" ? "coleção" : section === "tags" ? "tag" : "categoria"}</button></section><div className="organize-grid">{groups.map((group, index) => <article className="panel" key={group}><div className="collection-head"><span>{section === "tags" ? "#" : "◇"}</span><div><h2>{group}</h2><p>{(index % 3) + 1} livros</p></div><button>···</button></div><div className="cover-stack">{books.slice(index % 3, index % 3 + 3).map((book) => <button key={book.id} onClick={() => onOpen(book)}><Cover book={book} size="small" /></button>)}</div></article>)}</div></div>;
+  const kind = section as OrganizationKind;
+  const defaultNames = kind === "categories" ? ["Ficção científica", "Clássicos", "História", "Fantasia", "Desenvolvimento pessoal"] : kind === "tags" ? ["política", "humanidade", "gênero", "aventura", "hábitos", "sociedade"] : ["Essenciais", "Para reler", "Viagens longas", "Recomendações de amigos"];
+  const defaults: OrganizationItem[] = defaultNames.map((name, index) => ({ id: `default-${kind}-${index}`, kind, name, bookIds: kind === "categories" ? books.filter((book) => book.categories.includes(name)).map((book) => book.id) : kind === "tags" ? books.filter((book) => book.tags.includes(name)).map((book) => book.id) : books.slice(index % 3, index % 3 + 3).map((book) => book.id) }));
+  const saved = items.filter((item) => item.kind === kind);
+  const groups = [...saved, ...defaults.filter((item) => !saved.some((savedItem) => savedItem.name.toLocaleLowerCase("pt-BR") === item.name.toLocaleLowerCase("pt-BR")))];
+  return <div className="page organize-page"><section className="page-heading"><div><span className="eyebrow">Organização flexível</span><h1>{title}</h1><p>{subtitle}</p></div><button className="primary-button" onClick={onCreate}>＋ Criar {section === "collections" ? "coleção" : section === "tags" ? "tag" : "categoria"}</button></section><div className="organize-grid">{groups.map((group) => { const groupBooks = group.bookIds.map((id) => books.find((book) => book.id === id)).filter((book): book is Book => Boolean(book)); return <article className="panel" key={group.id}><div className="collection-head"><span>{section === "tags" ? "#" : "◇"}</span><button className="collection-filter" onClick={() => onFilter(group)}><h2>{group.name}</h2><p>{groupBooks.length} {groupBooks.length === 1 ? "livro" : "livros"}</p></button><button onClick={() => onFilter(group)} aria-label={`Filtrar por ${group.name}`}>→</button></div><div className="cover-stack">{groupBooks.slice(0, 3).map((book) => <button key={book.id} onClick={() => onOpen(book)}><Cover book={book} size="small" /></button>)}</div></article>; })}</div></div>;
 }
 
 function Integrations() {
@@ -785,6 +848,21 @@ function AddBookDialog({ books, onClose, onAdd }: { books: Book[]; onClose: () =
     onAdd(book);
   };
   return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog add-dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><div className="dialog-head"><div><span className="eyebrow">Cadastro inteligente</span><h2 id="add-title">Adicionar livro</h2><p>Informe somente o essencial. Buscamos o restante.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><div className="form-row"><label><span>Título do livro</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: Ensaio sobre a cegueira" /></label><label><span>Autor</span><input value={author} onChange={(event) => setAuthor(event.target.value)} onKeyDown={(event) => event.key === "Enter" && search()} placeholder="Ex.: José Saramago" /></label></div><button className="primary-button search-metadata" onClick={search} disabled={loading}>{loading ? "Buscando metadados…" : "⌕ Buscar automaticamente"}</button>{error && <p className="form-error">{error}</p>}{results.length > 0 && <div className="search-results">{results.map((result) => <button key={result.sourceId} onClick={() => add(result)}><div className="result-cover">{result.coverUrl ? <img src={result.coverUrl} alt="" /> : <span>{result.title.slice(0, 1)}</span>}</div><span><b>{result.title}</b><small>{result.author} · {result.published || "Ano desconhecido"}</small><i>{result.pages ? `${result.pages} páginas` : "Páginas não informadas"}</i></span><strong>＋</strong></button>)}</div>}<div className="manual-add"><span>Não encontrou?</span><button onClick={() => add()}>Adicionar com estes dados</button></div><footer>Metadados fornecidos pela Open Library. Suas edições manuais nunca serão sobrescritas.</footer></section></div>;
+}
+
+function OrganizationDialog({ kind, books, existing, onClose, onSave }: { kind: OrganizationKind; books: Book[]; existing: OrganizationItem[]; onClose: () => void; onSave: (item: OrganizationItem) => void }) {
+  const [name, setName] = useState("");
+  const [bookIds, setBookIds] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const singular = kind === "categories" ? "categoria" : kind === "tags" ? "tag" : "coleção";
+  const toggleBook = (id: string) => setBookIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  const submit = () => {
+    const normalized = name.trim().replace(/\s+/g, " ");
+    if (!normalized) { setError(`Informe o nome da ${singular}.`); return; }
+    if (existing.some((item) => item.kind === kind && item.name.toLocaleLowerCase("pt-BR") === normalized.toLocaleLowerCase("pt-BR"))) { setError(`Esta ${singular} já existe.`); return; }
+    onSave({ id: crypto.randomUUID(), kind, name: normalized, bookIds });
+  };
+  return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="dialog organization-dialog" role="dialog" aria-modal="true" aria-labelledby="organization-title"><div className="dialog-head"><div><span className="eyebrow">Organização</span><h2 id="organization-title">Criar {singular}</h2><p>Defina um nome e escolha os livros que farão parte.</p></div><button onClick={onClose} aria-label="Fechar">×</button></div><label className="organization-name"><span>Nome da {singular}</span><input autoFocus value={name} maxLength={60} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submit()} placeholder={`Ex.: ${kind === "categories" ? "Ensaios" : kind === "tags" ? "para pesquisar" : "Favoritos do ano"}`} /></label><fieldset className="organization-books"><legend>Livros nesta {singular}</legend>{books.map((book) => <label key={book.id}><input type="checkbox" checked={bookIds.includes(book.id)} onChange={() => toggleBook(book.id)} /><Cover book={book} size="small" /><span><b>{book.title}</b><small>{book.author}</small></span></label>)}</fieldset>{error && <p className="form-error">{error}</p>}<button className="primary-button dialog-submit" onClick={submit}>Criar {singular}</button></section></div>;
 }
 
 function ReadingDialog({ book, onClose, onSave }: { book: Book; onClose: () => void; onSave: (book: Book) => void }) {
