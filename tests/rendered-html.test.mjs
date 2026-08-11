@@ -45,6 +45,8 @@ test("mantém temas, saudação e organização manual consistentes", async () =
   ]);
   assert.match(app, /window\.setInterval\(\(\) => setToday\(new Date\(\)\), 60_000\)/);
   assert.match(app, /greetingFor\(today\)/);
+  assert.match(app, /className="eyebrow" suppressHydrationWarning/);
+  assert.match(app, /<h1 suppressHydrationWarning>\{greetingFor\(today\)\}/);
   assert.match(app, /className="primary-button add-book-button"/);
   assert.match(app, /aria-label="Adicionar livro" aria-haspopup="dialog"/);
   assert.match(app, /className="add-label">Adicionar livro/);

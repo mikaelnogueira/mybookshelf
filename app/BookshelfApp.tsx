@@ -805,7 +805,7 @@ function Dashboard({ books, readingBook, onOpen, onRead, onAdd, onNavigate }: { 
   return (
     <div className="page dashboard-page">
       <section className="page-heading dashboard-heading">
-        <div><span className="eyebrow">{todayLabel(today)}</span><h1>{greetingFor(today)}, leitor.</h1><p>{pagesByDate.size ? `${pagesByDate.get(todayKey) ?? 0} páginas registradas hoje.` : "Suas métricas começam com a primeira leitura registrada."}</p></div>
+        <div><span className="eyebrow" suppressHydrationWarning>{todayLabel(today)}</span><h1 suppressHydrationWarning>{greetingFor(today)}, leitor.</h1><p>{pagesByDate.size ? `${pagesByDate.get(todayKey) ?? 0} páginas registradas hoje.` : "Suas métricas começam com a primeira leitura registrada."}</p></div>
         <div className="heading-quote"><i>“</i><p>Um livro é uma prova de que os seres humanos são capazes de fazer magia.<small>— Carl Sagan</small></p></div>
       </section>
 
