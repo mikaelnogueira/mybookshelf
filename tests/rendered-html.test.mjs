@@ -46,11 +46,14 @@ test("mantém temas, saudação e organização manual consistentes", async () =
   assert.match(app, /window\.setInterval\(\(\) => setToday\(new Date\(\)\), 60_000\)/);
   assert.match(app, /greetingFor\(today\)/);
   assert.match(app, /className="primary-button add-book-button"/);
+  assert.match(app, /className="add-label">Adicionar livro/);
   assert.match(app, /Salvar alterações/);
   assert.match(app, /metadados automáticos e nunca os substitui/);
   assert.doesNotMatch(css, /top-actions \.icon-button:first-child \{ display: none/);
   assert.match(css, /data-style="brutal"\] \.view-grid \.library-book-copy,[\s\S]*padding: 10px/);
   assert.match(css, /\.add-icon \{ display: inline-grid; place-items: center/);
+  assert.match(css, /\.add-book-button \.add-label \{ display: none/);
+  assert.match(css, /\.add-book-button \.add-icon \{ display: grid; place-items: center; width: 100%; height: 100%/);
   assert.match(classification, /Ficção científica/);
   assert.match(classification, /const tags = clean/);
   assert.match(organizationApi, /export async function PATCH/);

@@ -717,7 +717,7 @@ export function BookshelfApp() {
           <div className="top-actions">
             <button className="icon-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Alternar tema">{theme === "dark" ? "☼" : "◐"}</button>
             <button className="icon-button" onClick={() => setShowPrefs(true)} aria-label="Personalizar interface">◈</button>
-            <button type="button" className="primary-button add-book-button" onClick={() => setShowAdd(true)} aria-haspopup="dialog"><span className="add-icon" aria-hidden="true">+</span>Adicionar livro</button>
+            <button type="button" className="primary-button add-book-button" onClick={() => setShowAdd(true)} aria-haspopup="dialog"><span className="add-icon" aria-hidden="true">+</span><span className="add-label">Adicionar livro</span></button>
           </div>
         </header>
 
