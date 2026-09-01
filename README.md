@@ -159,7 +159,7 @@ android/app/build/outputs/apk/debug/
 
 ## Web Release
 
-[Web Release Guide](https://github.com/mikaelnogueira/mybookshelf/blob/main/docs/guides/web-release.md)
+[Web Release Guide](docs/guides /web-release.md)
 
 ## Project Status
 
