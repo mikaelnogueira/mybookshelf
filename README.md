@@ -161,7 +161,7 @@ android/app/build/outputs/apk/debug/
 
 Guide: How to Load the Web Version
 
-![Web RELEASE](docs/guides/web-release.md)
+[Guide: Web Release](docs/guides/web-release.md)
 
 ## Project Status
 
