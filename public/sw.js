@@ -1,4 +1,4 @@
-const CACHE = "mybookshelf-shell-v1";
+const CACHE = "mybookshelf-shell-v2-2-8";
 const SHELL = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

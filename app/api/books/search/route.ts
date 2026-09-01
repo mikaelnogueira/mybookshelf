@@ -18,15 +18,12 @@ export async function GET(request: Request) {
   const title = searchParams.get("title")?.trim() ?? "";
   const author = searchParams.get("author")?.trim() ?? "";
 
-  if (title.length < 2) {
-    return Response.json({ books: [] });
-  }
+  if (title.length < 2) return Response.json({ books: [] });
 
   const query = new URLSearchParams({
     title,
     limit: "6",
-    fields:
-      "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,publisher,language,isbn,subject",
+    fields: "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,publisher,language,isbn,subject",
   });
   if (author) query.set("author", author);
 
@@ -44,9 +41,7 @@ export async function GET(request: Request) {
         sourceId: book.key ?? crypto.randomUUID(),
         title: book.title ?? "Título não informado",
         author: book.author_name?.[0] ?? "Autor não informado",
-        coverUrl: book.cover_i
-          ? `https://covers.openlibrary.org/b/id/${book.cover_i}-L.jpg`
-          : "",
+        coverUrl: book.cover_i ? `https://covers.openlibrary.org/b/id/${book.cover_i}-L.jpg` : "",
         pages: book.number_of_pages_median ?? 0,
         published: book.first_publish_year?.toString() ?? "",
         publisher: book.publisher?.[0] ?? "",
@@ -58,9 +53,6 @@ export async function GET(request: Request) {
 
     return Response.json({ books });
   } catch {
-    return Response.json(
-      { books: [], error: "Não foi possível consultar os metadados agora." },
-      { status: 503 },
-    );
+    return Response.json({ books: [], error: "Não foi possível consultar os metadados agora." }, { status: 503 });
   }
 }

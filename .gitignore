@@ -43,3 +43,12 @@ tsconfig.tsbuildinfo
 /outputs/
 /work/
 /releases/*.apk
+
+# Generated mobile build
+/mobile/www/
+
+# Local preview logs
+.preview-server*.log
+
+# Generated release packages
+/releases/

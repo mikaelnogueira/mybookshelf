@@ -7,8 +7,8 @@ android {
         applicationId "com.mybookshelf.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "1.3"
+        versionCode 27
+        versionName "2.2.8"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -43,6 +43,17 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
+
+// Builds can opt into a materialized asset directory when the project lives in OneDrive.
+def materializedAssets = System.getenv('MYBOOKSHELF_ANDROID_ASSETS')
+if (materializedAssets) {
+    android.sourceSets.main.assets.srcDirs = [materializedAssets]
+}
+
+def materializedBuild = System.getenv('MYBOOKSHELF_ANDROID_BUILD')
+if (materializedBuild) {
+    layout.buildDirectory.set(file(materializedBuild))
+}
 
 try {
     def servicesJSON = file('google-services.json')
