@@ -10,6 +10,10 @@ The project follows a local-first approach, allowing essential reading data and 
 
 The application is currently being developed for Web, PWA, and Android.
 
+| Home | Library |
+| --- | --- |
+| ![Home](docs/screenshots/01-home.jpeg) | ![Library](docs/screenshots/02-library.jpeg) |
+
 ## Features
 
 - Personal book library with multiple visualization modes
@@ -70,6 +74,10 @@ The project also includes a Cloudflare D1 layer for structured application data 
 
 The reader provides two main reading approaches:
 
+| Book Details | PDF Reader |
+| --- | --- |
+| ![Book Details](docs/screenshots/03-book-details.jpeg) | ![PDF Reader](docs/screenshots/04-pdf-reader.jpeg) |
+
 ### Traditional Reading
 
 A conventional document-based reading interface with page tracking and reading progress.
@@ -80,13 +88,19 @@ A Rapid Serial Visual Presentation mode designed for focused reading and adjusta
 
 The reading system is being developed alongside progress tracking so that reading sessions can be recorded consistently across the different reading modes.
 
+### Statistics & Customization
+
+| Statistics | Interface Configuration |
+| --- | --- |
+| ![Statistics](docs/screenshots/05-statistics.jpeg) | ![Interface Configuration](docs/screenshots/06-interface-configuration.jpeg) |
+
 ## Interface
 
 The application includes three visual styles:
 
-- Minimalist
-- Neobrutalism
-- Glass
+| Minimalist | Neobrutalism | Glass — Dark |
+| --- | --- | --- |
+| ![Home](docs/screenshots/01-home.jpeg) | ![Neobrutalism Theme](docs/screenshots/07-neobrutalism-theme.jpeg) | ![Glass Theme](docs/screenshots/08-glass-theme-dark.jpeg) |
 
 It also supports:
 
