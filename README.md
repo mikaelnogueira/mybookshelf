@@ -157,6 +157,12 @@ The generated debug APK is placed under:
 android/app/build/outputs/apk/debug/
 ```
 
+## Web Release
+
+Guide: How to Load the Web Version
+
+![Web RELEASE](docs/guides/web-release.md)
+
 ## Project Status
 
 MyBookshelf is currently under active development.
