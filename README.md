@@ -2,10 +2,6 @@
 
 A local-first, cross-platform reading management application built with React and TypeScript, designed to provide a focused reading experience across web and Android.
 
-## Preview
-
-> Screenshots and visual previews coming soon.
-
 ## About
 
 MyBookshelf is a personal reading platform focused on managing books, tracking reading progress, and providing different reading experiences in a single application.
