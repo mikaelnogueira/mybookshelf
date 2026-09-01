@@ -159,7 +159,7 @@ android/app/build/outputs/apk/debug/
 
 ## Web Release
 
-[Guide: How to Load the Web Version](https://github.com/mikaelnogueira/mybookshelf/tree/6b04a45e6521df1e97377856909142ba033d854f/docs/guides%20)
+[Guide: How to Load the Web Version](https://github.com/mikaelnogueira/mybookshelf/blob/e45a3359b5e745693c1d473eb959fe3bbbc140ca/docs/guides%20/web-release.md)
 
 ## Project Status
 
